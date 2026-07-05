@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{SITE_TITLE}}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #111510;
+      --muted: #5c6658;
+      --paper: #f4f5ee;
+      --panel: #fbfcf4;
+      --sage: #9eb58d;
+      --olive: #4f6b3a;
+      --lime: #d7ff35;
+      --line: #1f261c;
+      --danger: #b43224;
+      --shadow: 0 18px 48px rgba(17, 21, 16, .13);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 80% 10%, rgba(215, 255, 53, .23), transparent 22rem),
+        linear-gradient(135deg, #f7f8f1, #e8eddf);
+      font-family: "DM Mono", monospace;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .12;
+      background-image: radial-gradient(var(--ink) 1px, transparent 1px);
+      background-size: 9px 9px;
+      mask-image: linear-gradient(115deg, transparent 0 45%, #000 70%, transparent 100%);
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 8px;
+      min-height: 40px;
+      padding: 0 14px;
+      cursor: pointer;
+      box-shadow: 3px 3px 0 var(--line);
+      transition: transform .12s, box-shadow .12s, background .12s;
+    }
+    button:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--line); }
+    button.primary { background: var(--lime); font-weight: 700; }
+    button.ghost { box-shadow: none; background: transparent; }
+    button.danger { background: #ffe3df; color: var(--danger); }
+    code { font-family: inherit; background: #edf2e4; padding: 1px 5px; border-radius: 4px; }
+    .shell { width: min(1220px, calc(100% - 28px)); margin: 0 auto; padding: 24px 0 40px; }
+    .top {
+      display: grid;
+      grid-template-columns: 1.2fr auto;
+      gap: 14px;
+      align-items: stretch;
+      margin-bottom: 14px;
+    }
+    .brand, .stats, .panel, .route, .drawer {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(251, 252, 244, .92);
+      box-shadow: var(--shadow);
+    }
+    .brand { padding: 18px 20px; position: relative; }
+    h1 {
+      margin: 0;
+      font: 800 clamp(1.5rem, 4vw, 3rem)/1.05 "Syne", sans-serif;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+    .brand p { margin: 12px 0 0; max-width: 720px; color: var(--muted); line-height: 1.55; }
+    .stats { min-width: 260px; padding: 18px; display: grid; gap: 12px; align-content: center; }
+    .stat-label { color: var(--muted); font-size: .78rem; text-transform: uppercase; }
+    .stat-value { font: 800 2.2rem/1 "Syne", sans-serif; }
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto auto auto auto auto;
+      gap: 10px;
+      margin: 14px 0;
+      align-items: center;
+    }
+    .search, input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink);
+      padding: 11px 12px;
+      outline: none;
+    }
+    textarea { min-height: 180px; resize: vertical; line-height: 1.45; }
+    .route-list { display: grid; gap: 10px; }
+    .route {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 14px;
+      padding: 14px;
+      align-items: center;
+    }
+    .route-main { min-width: 0; }
+    .domain { font: 700 1.15rem/1.2 "Syne", sans-serif; overflow-wrap: anywhere; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; color: var(--muted); font-size: .82rem; }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      background: #edf2e4;
+      color: var(--ink);
+    }
+    .pill.hot { background: var(--lime); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      background: rgba(17, 21, 16, .22);
+      padding: 18px;
+      z-index: 20;
+    }
+    .drawer-backdrop.open { display: grid; place-items: center; }
+    .drawer {
+      width: min(980px, 100%);
+      max-height: calc(100vh - 36px);
+      overflow: auto;
+      padding: 16px;
+      position: relative;
+    }
+    .drawer-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 12px;
+    }
+    .drawer h2 { margin: 0; font: 800 1.8rem/1 "Syne", sans-serif; }
+    .tabs { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+    .tab.active { background: var(--lime); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .field { display: grid; gap: 6px; }
+    label { color: var(--muted); font-size: .78rem; text-transform: uppercase; }
+    .directive {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #f0f4e9;
+      display: grid;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .directive-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+    .directive-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; min-height: 42px; }
+    .toggle-row input { width: auto; }
+    .hidden { display: none !important; }
+    .notice {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #edf6dc;
+      margin: 10px 0;
+      color: var(--muted);
+    }
+    .source-box { min-height: 380px; white-space: pre; }
+    .footer-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; flex-wrap: wrap; }
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 28px;
+      text-align: center;
+      color: var(--muted);
+      background: rgba(251, 252, 244, .68);
+    }
+    @media (max-width: 760px) {
+      .top, .toolbar, .route, .grid, .directive-row { grid-template-columns: 1fr; }
+      .stats { min-width: 0; }
+      .actions, .footer-actions { justify-content: stretch; }
+      button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="top">
+      <div class="brand">
+        <h1>{{SITE_TITLE}}</h1>
+        <p>Caddyfile control with hardcoded reverse-proxy parsing first, raw preservation always, and AI only as the final fallback.</p>
+      </div>
+      <aside class="stats">
+        <div>
+          <div class="stat-label">Online</div>
+          <div class="stat-value" id="onlineState">--</div>
+        </div>
+        <div>
+          <div class="stat-label">Active Nodes</div>
+          <div class="stat-value" id="routeCount">0</div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="toolbar">
+      <input class="search" id="search" placeholder="Search subdomain, directive, target..." />
+      <button id="reloadBtn">Reload Caddy</button>
+      <button id="rawBtn">Raw Config</button>
+      <button id="cliBtn">CLI Connect</button>
+      <button id="logoutBtn">Logout</button>
+      <button class="primary" id="newBtn">New Route</button>
+    </section>
+
+    <section id="routeList" class="route-list"></section>
+  </main>
+
+  <div class="drawer-backdrop" id="drawerBackdrop">
+    <section class="drawer">
+      <div class="drawer-head">
+        <div>
+          <h2 id="drawerTitle">Edit Route</h2>
+          <div class="notice" id="parseNotice">GUI is the default. Complex blocks stay preserved in source mode.</div>
+        </div>
+        <button class="ghost" id="closeBtn">Close</button>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="gui">GUI</button>
+        <button class="tab" data-tab="source">Source</button>
+        <button class="tab" data-tab="ai">AI Fallback</button>
+      </div>
+
+      <div id="guiPane">
+        <div class="grid">
+          <div class="field">
+            <label>Subdomain</label>
+            <input id="domainInput" placeholder="api.example.com" />
+          </div>
+          <div class="field">
+            <label>Status</label>
+            <select id="statusSelect">
+              <option value="ON">Online</option>
+              <option value="OFF">Disabled</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>TLS Strategy</label>
+            <select id="tlsSelect">
+              <option value="default">None / Default</option>
+              <option value="internal">Local Internal</option>
+              <option value="cloudflare">Cloudflare DNS</option>
+              <option value="custom">Custom Raw TLS</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Request Watch Log</label>
+            <div class="toggle-row">
+              <input id="watchLogToggle" type="checkbox" />
+              <span>import request_watch_log</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>Reverse Proxy</label>
+            <input id="reverseProxyInput" placeholder="localhost:8080" />
+          </div>
+        </div>
+        <div class="field hidden" id="tlsRawWrap" style="margin-top:12px">
+          <label>Raw TLS Block</label>
+          <textarea id="tlsRaw"></textarea>
+        </div>
+        <div class="directive-tools">
+          <label>Extra Directives</label>
+          <button id="addDirectiveBtn" type="button">Add Directive</button>
+        </div>
+        <div id="directives"></div>
+      </div>
+
+      <div id="sourcePane" class="hidden">
+        <textarea id="sourceInput" class="source-box" spellcheck="false"></textarea>
+      </div>
+
+      <div id="aiPane" class="hidden">
+        <div class="notice">Use this when the hardcoded parser cannot safely understand a block. You can apply the parse, save it as a hardcoded rule, or regenerate it.</div>
+        <button id="aiParseBtn" class="primary">Ask Cohere v2 To Parse</button>
+        <button id="applyAiBtn">Apply AI To GUI</button>
+        <button id="saveHardcodedBtn">Save As Hardcoded</button>
+        <button id="regenHardcodedBtn">Regen Hardcoded</button>
+        <pre id="aiResult" class="notice" style="white-space:pre-wrap"></pre>
+      </div>
+
+      <div class="footer-actions">
+        <button class="danger hidden" id="deleteBtn">Delete</button>
+        <button id="syncSourceBtn">Sync GUI To Source</button>
+        <button class="primary" id="saveBtn">Save</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="drawer-backdrop" id="cliBackdrop">
+    <section class="drawer" style="width:min(620px, 100%)">
+      <div class="drawer-head">
+        <div>
+          <h2>Connect The CLI</h2>
+          <div class="notice">Paste this into <code>caddedit config &lt;string&gt;</code> on any machine you want to manage this server from.</div>
+        </div>
+        <button class="ghost" id="cliCloseBtn">Close</button>
+      </div>
+
+      <div class="field">
+        <label>Server URL</label>
+        <input id="cliUrl" readonly />
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>Connection String</label>
+        <textarea id="cliConnString" class="source-box" style="min-height:90px" readonly></textarea>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <label>Token Only</label>
+        <input id="cliTokenOnly" readonly />
+      </div>
+
+      <div class="notice">This grants full access to every route on this server - treat it exactly like your unlock password. It does not expire on its own; re-running <code>caddedit config login</code> after changing the password will replace it.</div>
+
+      <div class="footer-actions">
+        <button id="cliCopyTokenBtn">Copy Token Only</button>
+        <button class="primary" id="cliCopyStringBtn">Copy Connection String</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const state = { config: null, routes: [], editing: null, tab: "gui", rawMode: false, aiParsed: null };
+    const $ = (id) => document.getElementById(id);
+    const knownTypes = ["import","file_server","redir","respond","encode","header","php_fastcgi","root","try_files","request_body","basic_auth","log","handle_path","rewrite","raw","raw_block"];
+
+    function escapeHtml(value) {
+      return String(value || "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
+    }
+
+    function toBase64Url(str) {
+      return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    }
+
+    function exampleDomain() {
+      const hint = state.config?.site_domain_hint;
+      return hint ? `example.${hint}` : "example.com";
+    }
+
+    async function request(url, options = {}) {
+      const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...options });
+      if (res.status === 401) {
+        location.reload();
+        throw new Error("Login required");
+      }
+      if (!res.ok) {
+        let message = res.statusText;
+        try { message = (await res.json()).detail || message; } catch {}
+        throw new Error(message);
+      }
+      return res.json();
+    }
+
+    async function loadConfig() {
+      $("onlineState").textContent = "...";
+      state.config = await request("/api/config");
+      state.routes = state.config.routes || [];
+      $("onlineState").textContent = "OK";
+      if (state.config.disable_ai) {
+        const aiTab = document.querySelector('.tab[data-tab="ai"]');
+        if (aiTab) aiTab.classList.add("hidden");
+      }
+      if (state.config.demo_mode) {
+        const banner = document.createElement("div");
+        banner.className = "notice";
+        banner.style.cssText = "background:#fff2e0; border-color:#ffa500; color:#b36b00; margin-bottom:14px; font-weight:bold;";
+        const domainLabel = state.config.site_domain_hint ? `*.${state.config.site_domain_hint}` : "this demo's allowed domains";
+        banner.innerText = `⚠️ Sandbox Demo Mode: Configuration resets every 2 minutes. Restrictions: maximum 3 subdomains of ${domainLabel}, and reverse_proxy is disabled (only static respond allowed).`;
+        document.querySelector("main.shell").prepend(banner);
+
+        $("rawBtn").classList.add("hidden");
+        $("reverseProxyInput").disabled = true;
+        $("reverseProxyInput").placeholder = "Disabled in demo mode";
+      }
+      renderRoutes();
+    }
+
+
+    function routeText(route) {
+      return [route.domain, route.source, route.tls?.mode, route.reverse_proxy, ...(route.directives || []).map(d => `${d.type} ${d.args || d.raw || ""}`)].join(" ").toLowerCase();
+    }
+
+    function renderRoutes() {
+      const query = $("search").value.trim().toLowerCase();
+      const routes = state.routes.filter(route => !query || routeText(route).includes(query));
+      $("routeCount").textContent = state.routes.length;
+      $("routeList").innerHTML = routes.length ? routes.map(route => {
+        const directives = (route.directives || []).filter(d => !["raw"].includes(d.type)).slice(0, 3).map(d => `<span class="pill">${escapeHtml(d.type)}</span>`).join("");
+        return `<article class="route">
+          <div class="route-main">
+            <div class="domain">${escapeHtml(route.domain)}</div>
+            <div class="meta">
+              <span class="pill ${route.status === "ON" ? "hot" : ""}">${escapeHtml(route.status || "ON")}</span>
+              <span class="pill hot">${escapeHtml(route.tls?.mode || "default")}</span>
+              ${route.request_watch_log ? '<span class="pill">watch log</span>' : ''}
+              ${route.reverse_proxy ? '<span class="pill">reverse_proxy</span>' : ''}
+              ${route.complex ? '<span class="pill">raw preserved</span>' : '<span class="pill">gui ready</span>'}
+              ${directives}
+            </div>
+          </div>
+          <div class="actions">
+            <button onclick="toggleRoute('${route.id}')">${route.status === "ON" ? "Disable" : "Enable"}</button>
+            <button onclick="openEditor('${route.id}')">Edit</button>
+            <button onclick="copyRoute('${route.id}')">Copy</button>
+          </div>
+        </article>`;
+      }).join("") : `<div class="empty">No matching routes.</div>`;
+    }
+
+    function blankRoute() {
+      return {
+        id: null,
+        domain: "",
+        tls: { mode: "default", raw: "" },
+        request_watch_log: true,
+        reverse_proxy: "127.0.0.1:8080",
+        directives: [],
+        source: `${exampleDomain()} {\n    import request_watch_log\n    reverse_proxy 127.0.0.1:8080\n}`,
+        status: "ON",
+        complex: false,
+      };
+    }
+
+    function openEditor(id = null) {
+      const route = id ? structuredClone(state.routes.find(item => item.id === id)) : blankRoute();
+      state.editing = route;
+      state.rawMode = false;
+      $("drawerTitle").textContent = id ? `Edit ${route.domain}` : "New Route";
+      $("deleteBtn").classList.toggle("hidden", !id);
+      hydrateGui(route);
+      $("sourceInput").value = route.source || buildSourceFromGui();
+      setTab("gui");
+      if (state.config.demo_mode) {
+        $("reverseProxyInput").disabled = true;
+        $("reverseProxyInput").value = "";
+      }
+      $("drawerBackdrop").classList.add("open");
+    }
+
+    function copyRoute(id) {
+      const route = structuredClone(state.routes.find(item => item.id === id));
+      route.id = null;
+      route.domain = `copy-${route.domain}`;
+      route.source = route.source.replace(/^([^{\n]+)/, route.domain + " ");
+      state.editing = route;
+      state.rawMode = false;
+      $("drawerTitle").textContent = `Copy ${route.domain}`;
+      $("deleteBtn").classList.add("hidden");
+      hydrateGui(route);
+      $("sourceInput").value = route.source;
+      setTab("gui");
+      $("drawerBackdrop").classList.add("open");
+    }
+
+    function hydrateGui(route) {
+      $("domainInput").value = route.domain || "";
+      $("statusSelect").value = route.status || "ON";
+      $("watchLogToggle").checked = route.request_watch_log !== false;
+      $("reverseProxyInput").value = route.reverse_proxy || "";
+      $("tlsSelect").value = route.tls?.mode || "default";
+      $("tlsRaw").value = route.tls?.raw || "";
+      renderDirectiveInputs(route.directives || []);
+      toggleTlsRaw();
+      $("parseNotice").textContent = route.complex
+        ? "Some lines are complex and preserved as raw source. GUI edits will keep those strings."
+        : `${route.parser === "learned" ? "Saved hardcoded rule" : "Hardcoded parser"} recognized this route. GUI is safe as the default editor.`;
+    }
+
+    function renderDirectiveInputs(directives) {
+      $("directives").innerHTML = directives.map((directive, index) => directiveTemplate(directive, index)).join("");
+    }
+
+    function directiveTemplate(directive, index) {
+      const type = directive.type || "reverse_proxy";
+      const options = knownTypes.map(item => `<option value="${item}" ${item === type ? "selected" : ""}>${item}</option>`).join("");
+      const value = type === "raw" || type === "raw_block" ? (directive.raw || "") : (directive.args || "");
+      return `<div class="directive" data-index="${index}">
+        <div class="directive-row">
+          <select data-role="type">${options}</select>
+          <input data-role="value" value="${escapeHtml(value)}" placeholder="target, args, or raw line" />
+          <button type="button" onclick="removeDirective(${index})">Remove</button>
+        </div>
+        ${type === "raw_block" ? `<textarea data-role="rawblock">${escapeHtml(value)}</textarea>` : ""}
+      </div>`;
+    }
+
+    function gatherGui() {
+      const directives = [...document.querySelectorAll(".directive")].map(node => {
+        const type = node.querySelector('[data-role="type"]').value;
+        const valueNode = node.querySelector('[data-role="rawblock"]') || node.querySelector('[data-role="value"]');
+        const value = valueNode.value;
+        if (type === "raw" || type === "raw_block") return { type, raw: value };
+        return { type, args: value };
+      });
+      return {
+        domain: $("domainInput").value.trim(),
+        status: $("statusSelect").value,
+        request_watch_log: $("watchLogToggle").checked,
+        reverse_proxy: $("reverseProxyInput").value.trim(),
+        tls: { mode: $("tlsSelect").value, raw: $("tlsRaw").value },
+        directives,
+      };
+    }
+
+    function buildSourceFromGui() {
+      const gui = gatherGui();
+      const lines = [`${gui.domain || exampleDomain()} {`];
+      if (gui.request_watch_log) lines.push("    import request_watch_log");
+      if (gui.tls.mode === "internal") lines.push("    tls internal");
+      if (gui.tls.mode === "cloudflare" || gui.tls.mode === "custom") {
+        const raw = gui.tls.raw?.trim() || "tls {\n        dns cloudflare {env.CLOUDFLARE_API_TOKEN}\n    }";
+        lines.push(...raw.split("\n").map(line => line.startsWith("    ") ? line : `    ${line}`));
+      }
+      if (gui.reverse_proxy) lines.push(`    reverse_proxy ${gui.reverse_proxy}`);
+      for (const directive of gui.directives) {
+        if (directive.type === "raw" || directive.type === "raw_block") {
+          lines.push(...String(directive.raw || "").split("\n").map(line => line.startsWith("    ") ? line : `    ${line}`));
+        } else {
+          lines.push(`    ${directive.type}${directive.args ? " " + directive.args : ""}`);
+        }
+      }
+      lines.push("}");
+      return lines.join("\n");
+    }
+
+    function setTab(tab) {
+      state.tab = tab;
+      document.querySelectorAll(".tab").forEach(button => button.classList.toggle("active", button.dataset.tab === tab));
+      $("guiPane").classList.toggle("hidden", tab !== "gui");
+      $("sourcePane").classList.toggle("hidden", tab !== "source");
+      $("aiPane").classList.toggle("hidden", tab !== "ai");
+    }
+
+    function toggleTlsRaw() {
+      $("tlsRawWrap").classList.toggle("hidden", !["cloudflare", "custom"].includes($("tlsSelect").value));
+    }
+
+    function removeDirective(index) {
+      const gui = gatherGui();
+      gui.directives.splice(index, 1);
+      renderDirectiveInputs(gui.directives);
+    }
+
+    async function saveRoute() {
+      if (state.rawMode) {
+        await request("/api/config", { method: "PUT", body: JSON.stringify({ source: $("sourceInput").value }) });
+        $("drawerBackdrop").classList.remove("open");
+        await loadConfig();
+        return;
+      }
+      const source = state.tab === "source" ? $("sourceInput").value : buildSourceFromGui();
+      const status = $("statusSelect").value || state.editing?.status || "ON";
+      if (!source.includes("{") || !source.includes("}")) throw new Error("Route source must be a Caddy site block.");
+      if (state.editing?.id) {
+        await request(`/api/routes/${state.editing.id}`, { method: "PUT", body: JSON.stringify({ source, status }) });
+      } else {
+        await request("/api/routes", { method: "POST", body: JSON.stringify({ source, status }) });
+      }
+      $("drawerBackdrop").classList.remove("open");
+      await loadConfig();
+    }
+
+    async function deleteRoute() {
+      if (!state.editing?.id || !confirm(`Delete ${state.editing.domain}?`)) return;
+      await request(`/api/routes/${state.editing.id}`, { method: "DELETE" });
+      $("drawerBackdrop").classList.remove("open");
+      await loadConfig();
+    }
+
+    async function toggleRoute(id) {
+      await request(`/api/routes/${id}/toggle`, { method: "POST", body: "{}" });
+      await loadConfig();
+    }
+
+    async function aiParse() {
+      $("aiResult").textContent = "Parsing with Cohere v2...";
+      try {
+        const data = await request("/api/ai/parse", { method: "POST", body: JSON.stringify({ source: $("sourceInput").value || buildSourceFromGui() }) });
+        state.aiParsed = data.parsed;
+        $("aiResult").textContent = JSON.stringify(data.parsed, null, 2);
+      } catch (error) {
+        $("aiResult").textContent = error.message;
+      }
+    }
+
+    function applyAiToGui() {
+      if (!state.aiParsed) {
+        alert("Run AI parse first.");
+        return;
+      }
+      const current = state.editing || blankRoute();
+      const merged = {
+        ...current,
+        domain: state.aiParsed.domain || current.domain,
+        tls: state.aiParsed.tls || current.tls,
+        request_watch_log: state.aiParsed.request_watch_log ?? current.request_watch_log ?? true,
+        reverse_proxy: state.aiParsed.reverse_proxy || current.reverse_proxy || "",
+        directives: state.aiParsed.directives || current.directives || [],
+        parser: "learned",
+      };
+      state.editing = merged;
+      hydrateGui(merged);
+      setTab("gui");
+    }
+
+    async function saveHardcodedRule() {
+      if (!state.aiParsed) {
+        alert("Run AI parse first.");
+        return;
+      }
+      const source = $("sourceInput").value || buildSourceFromGui();
+      await request("/api/hardcoded-rules", { method: "POST", body: JSON.stringify({ source, parsed: state.aiParsed }) });
+      applyAiToGui();
+      $("parseNotice").textContent = "Saved as a hardcoded rule. Reopen this route and it will use the learned GUI parse.";
+    }
+
+    async function regenHardcoded() {
+      const source = $("sourceInput").value || buildSourceFromGui();
+      await request("/api/hardcoded-rules", { method: "DELETE", body: JSON.stringify({ source }) });
+      state.aiParsed = null;
+      await aiParse();
+    }
+
+    async function openCliPanel() {
+      $("cliUrl").value = location.origin;
+      $("cliTokenOnly").value = "";
+      $("cliConnString").value = "Loading...";
+      $("cliBackdrop").classList.add("open");
+      try {
+        const data = await request("/api/auth/token");
+        $("cliTokenOnly").value = data.token;
+        const payload = JSON.stringify({ url: location.origin, token: data.token });
+        $("cliConnString").value = toBase64Url(payload);
+      } catch (error) {
+        $("cliConnString").value = "";
+        alert(error.message);
+      }
+    }
+
+    async function copyFromField(id, button, label) {
+      const value = $(id).value;
+      if (!value) return;
+      await navigator.clipboard.writeText(value);
+      const original = button.textContent;
+      button.textContent = "Copied!";
+      setTimeout(() => { button.textContent = label || original; }, 1200);
+    }
+
+    $("search").addEventListener("input", renderRoutes);
+    $("newBtn").addEventListener("click", () => openEditor(null));
+    $("logoutBtn").addEventListener("click", async () => {
+      await fetch("/api/auth/logout", { method: "POST" });
+      location.reload();
+    });
+    $("rawBtn").addEventListener("click", () => {
+      state.editing = { id: null, source: state.config.raw, domain: "Raw Caddyfile", tls: { mode: "default", raw: "" }, directives: [] };
+      state.rawMode = true;
+      $("drawerTitle").textContent = "Raw Caddyfile";
+      $("deleteBtn").classList.add("hidden");
+      $("sourceInput").value = state.config.raw;
+      setTab("source");
+      $("drawerBackdrop").classList.add("open");
+    });
+    $("reloadBtn").addEventListener("click", async () => {
+      $("reloadBtn").textContent = "Reloading...";
+      try {
+        await request("/api/reload", { method: "POST", body: "{}" });
+        $("reloadBtn").textContent = "Reloaded";
+      } catch (error) {
+        alert(error.message);
+        $("reloadBtn").textContent = "Reload Caddy";
+      }
+      setTimeout(() => $("reloadBtn").textContent = "Reload Caddy", 1200);
+    });
+    $("closeBtn").addEventListener("click", () => $("drawerBackdrop").classList.remove("open"));
+    $("drawerBackdrop").addEventListener("click", event => {
+      if (event.target === $("drawerBackdrop")) $("drawerBackdrop").classList.remove("open");
+    });
+    $("cliBtn").addEventListener("click", openCliPanel);
+    $("cliCloseBtn").addEventListener("click", () => $("cliBackdrop").classList.remove("open"));
+    $("cliBackdrop").addEventListener("click", event => {
+      if (event.target === $("cliBackdrop")) $("cliBackdrop").classList.remove("open");
+    });
+    $("cliCopyStringBtn").addEventListener("click", (event) => copyFromField("cliConnString", event.currentTarget, "Copy Connection String"));
+    $("cliCopyTokenBtn").addEventListener("click", (event) => copyFromField("cliTokenOnly", event.currentTarget, "Copy Token Only"));
+    document.querySelectorAll(".tab").forEach(button => button.addEventListener("click", () => setTab(button.dataset.tab)));
+    $("tlsSelect").addEventListener("change", toggleTlsRaw);
+    $("addDirectiveBtn").addEventListener("click", () => {
+      const gui = gatherGui();
+      gui.directives.push({ type: "reverse_proxy", args: "" });
+      renderDirectiveInputs(gui.directives);
+    });
+    $("directives").addEventListener("change", event => {
+      if (event.target.matches('[data-role="type"]')) {
+        const gui = gatherGui();
+        renderDirectiveInputs(gui.directives);
+      }
+    });
+    $("syncSourceBtn").addEventListener("click", () => {
+      $("sourceInput").value = buildSourceFromGui();
+      setTab("source");
+    });
+    $("saveBtn").addEventListener("click", () => saveRoute().catch(error => alert(error.message)));
+    $("deleteBtn").addEventListener("click", () => deleteRoute().catch(error => alert(error.message)));
+    $("aiParseBtn").addEventListener("click", aiParse);
+    $("applyAiBtn").addEventListener("click", applyAiToGui);
+    $("saveHardcodedBtn").addEventListener("click", () => saveHardcodedRule().catch(error => alert(error.message)));
+    $("regenHardcodedBtn").addEventListener("click", () => regenHardcoded().catch(error => alert(error.message)));
+    loadConfig().catch(error => {
+      $("onlineState").textContent = "ERR";
+      $("routeList").innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    });
+  </script>
+</body>
+</html>
