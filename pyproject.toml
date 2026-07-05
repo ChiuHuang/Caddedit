@@ -1,0 +1,12 @@
+[project]
+name = "caddedit"
+version = "0.1.0"
+description = "TXG1 Caddyfile GUI editor"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "httpx>=0.28.0",
+    "python-dotenv>=1.2.2",
+    "uvicorn[standard]>=0.34.0",
+]

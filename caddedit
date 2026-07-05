@@ -1,0 +1,619 @@
+#!/usr/bin/env python3
+"""
+caddedit - CLI client for the Caddedit
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import getpass
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Optional
+
+CONFIG_DIR = Path(os.environ.get("CADDEDIT_CLI_CONFIG_DIR", Path.home() / ".config" / "caddedit"))
+CONFIG_FILE = CONFIG_DIR / "cli.json"
+
+RED = "\033[0;31m"
+GREEN = "\033[0;32m"
+YELLOW = "\033[1;33m"
+CYAN = "\033[0;36m"
+NC = "\033[0m"
+
+CONFIG_HELP = """\
+usage: caddedit config [show|export|login|set-url URL|set-token [TOKEN]|<connection-string>]
+
+  caddedit config                       show current config
+  caddedit config show                  show current config
+  caddedit config export                print a shareable connection string (url + token)
+  caddedit config <connection-string>   import a connection string (from 'export', or the
+                                         web UI's "CLI Connect" panel)
+  caddedit config login                 log in with the unlock password, store the token
+                                         the server returns (the password itself is never saved)
+  caddedit config set-url URL           set only the server URL
+  caddedit config set-token [TOKEN]     set only the token (prompts if omitted)
+"""
+
+
+# ---------------------------------------------------------------------------
+# CLI's own config (URL + token) - lives in ~/.config/caddedit/cli.json,
+# NOT in the server's .env. This is intentional: the CLI may run from a
+# completely different machine than the server. The raw unlock password is
+# never written here - only the permanent token it's exchanged for.
+# ---------------------------------------------------------------------------
+
+def load_config() -> dict:
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_config(cfg: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+    CONFIG_FILE.chmod(0o600)
+
+
+def require_config() -> dict:
+    cfg = load_config()
+    if not cfg.get("url") or not cfg.get("token"):
+        print(f"{RED}Not configured yet.{NC} Run one of:")
+        print("  caddedit config <connection-string>   (paste one from the web UI's CLI Connect panel)")
+        print("  caddedit config login                 (log in with your password to get a token)")
+        print("  caddedit config set-url http://your-server:29048")
+        print("  caddedit config set-token <token>      (if you already have a token)")
+        print("(or just run 'caddedit' with no arguments for first-time setup)")
+        sys.exit(1)
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# connection-string helpers (base64 of a small JSON blob - RustDesk-style)
+# ---------------------------------------------------------------------------
+
+def encode_connection_string(cfg: dict) -> str:
+    blob = json.dumps({"url": cfg.get("url", ""), "token": cfg.get("token", "")}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(blob.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def decode_connection_string(s: str) -> dict:
+    padded = s + "=" * (-len(s) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+        data = json.loads(raw)
+    except Exception as e:
+        raise ApiError(f"not a valid connection string ({e})") from None
+    if "url" not in data or "token" not in data:
+        raise ApiError("connection string is missing url/token")
+    return data
+
+
+# ---------------------------------------------------------------------------
+# HTTP client - stdlib only, on purpose, so this script runs anywhere with
+# python3 and no extra dependencies, regardless of what's installed on the
+# machine the server happens to run on. Auth is a bearer token header sent
+# on every request - no cookie jar, no separate login step before each call.
+# ---------------------------------------------------------------------------
+
+class ApiError(Exception):
+    pass
+
+
+class ApiClient:
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+
+    def _request(self, method: str, path: str, body: Optional[dict] = None) -> dict:
+        url = f"{self.base_url}{path}"
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        req.add_header("Authorization", f"Bearer {self.token}")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "ignore")
+            try:
+                detail = json.loads(detail).get("detail", detail)
+            except json.JSONDecodeError:
+                pass
+            raise ApiError(f"{e.code}: {detail}") from None
+        except urllib.error.URLError as e:
+            raise ApiError(f"connection failed: {e.reason}") from None
+
+    def verify(self) -> None:
+        self._request("GET", "/api/auth/verify")
+
+    def get_config(self) -> dict:
+        return self._request("GET", "/api/config")
+
+    def create_route(self, source: str, status: str = "ON") -> dict:
+        return self._request("POST", "/api/routes", {"source": source, "status": status})
+
+    def update_route(self, route_id: str, source: str, status: str = "ON") -> dict:
+        return self._request("PUT", f"/api/routes/{route_id}", {"source": source, "status": status})
+
+    def delete_route(self, route_id: str) -> dict:
+        return self._request("DELETE", f"/api/routes/{route_id}")
+
+    def toggle_route(self, route_id: str) -> dict:
+        return self._request("POST", f"/api/routes/{route_id}/toggle")
+
+    def reload(self) -> dict:
+        return self._request("POST", "/api/reload")
+
+    @staticmethod
+    def fetch_token(base_url: str, password: str) -> str:
+        """One-off, unauthenticated call that trades the unlock password for
+        the permanent token. Used by `caddedit config login`. The password
+        is never written to disk - only this return value is."""
+        url = f"{base_url.rstrip('/')}/api/auth/token"
+        data = json.dumps({"password": password}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                result = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "ignore")
+            try:
+                detail = json.loads(detail).get("detail", detail)
+            except json.JSONDecodeError:
+                pass
+            raise ApiError(f"{e.code}: {detail}") from None
+        except urllib.error.URLError as e:
+            raise ApiError(f"connection failed: {e.reason}") from None
+        return result["token"]
+
+
+def connect() -> ApiClient:
+    """Build an authenticated client from the CLI's stored config, or exit with a clear error."""
+    cfg = require_config()
+    client = ApiClient(cfg["url"], cfg["token"])
+    try:
+        client.verify()
+    except ApiError as e:
+        print(f"{RED}Login failed: {e}{NC}")
+        print(f"{YELLOW}Your stored token may be stale - try 'caddedit config login' again.{NC}")
+        sys.exit(1)
+    return client
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def build_site_block(domain: str, target: Optional[str], tls_mode: Optional[str], raw: Optional[str]) -> str:
+    if raw:
+        return raw.strip()
+    lines = [f"{domain} {{"]
+    if tls_mode and tls_mode != "default":
+        lines.append(f"    tls {tls_mode}")
+    if target:
+        lines.append(f"    reverse_proxy {target}")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def print_routes(routes: list) -> None:
+    if not routes:
+        print("No routes configured.")
+        return
+    print(f"{'ID':<18} {'STATUS':<6} {'DOMAIN':<35} TARGET")
+    for r in routes:
+        color = GREEN if r.get("status") == "ON" else YELLOW
+        print(f"{r.get('id',''):<18} {color}{r.get('status',''):<6}{NC} {r.get('domain',''):<35} {r.get('reverse_proxy','')}")
+
+
+def find_route(routes: list, route_id: str) -> dict:
+    for r in routes:
+        if r.get("id") == route_id:
+            return r
+    print(f"{RED}Route '{route_id}' not found. Run 'caddedit list' to see IDs.{NC}")
+    sys.exit(1)
+
+
+def run_safely(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except ApiError as e:
+        print(f"{RED}Error: {e}{NC}")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# config subcommand (handled manually, not via argparse subparsers, so that
+# `caddedit config <connection-string>` works as a bare positional arg
+# alongside the named login/set-url/set-token/show/export forms)
+# ---------------------------------------------------------------------------
+
+def handle_config(args: list) -> None:
+    if not args or args[0] == "show":
+        cfg = load_config()
+        print(f"Config file: {CONFIG_FILE}")
+        print(f"URL:         {cfg.get('url', '(not set)')}")
+        print(f"Token:       {'********' if cfg.get('token') else '(not set)'}")
+        return
+
+    if args[0] in ("-h", "--help"):
+        print(CONFIG_HELP)
+        return
+
+    if args[0] == "export":
+        cfg = load_config()
+        if not cfg.get("url") or not cfg.get("token"):
+            print(f"{RED}Nothing to export yet - set up the CLI first.{NC}")
+            sys.exit(1)
+        print(encode_connection_string(cfg))
+        return
+
+    if args[0] == "set-url":
+        if len(args) < 2:
+            print(f"{RED}Usage: caddedit config set-url <url>{NC}")
+            sys.exit(1)
+        cfg = load_config()
+        cfg["url"] = args[1]
+        save_config(cfg)
+        print(f"{GREEN}URL set to {args[1]}{NC}")
+        return
+
+    if args[0] == "set-token":
+        cfg = load_config()
+        token = args[1] if len(args) > 1 else getpass.getpass("Token: ")
+        cfg["token"] = token.strip()
+        save_config(cfg)
+        print(f"{GREEN}Token saved to {CONFIG_FILE}{NC}")
+        return
+
+    if args[0] == "login":
+        cfg = load_config()
+        url = cfg.get("url") or input("Caddedit server URL (e.g. http://1.2.3.4:29048): ").strip()
+        password = getpass.getpass("Unlock password: ")
+        try:
+            token = ApiClient.fetch_token(url, password)
+        except ApiError as e:
+            print(f"{RED}Login failed: {e}{NC}")
+            sys.exit(1)
+        cfg = {"url": url, "token": token}
+        save_config(cfg)
+        print(f"{GREEN}Logged in.{NC} Token saved to {CONFIG_FILE} - your password was not stored.")
+        return
+
+    # Anything else is treated as a connection string to import.
+    try:
+        data = decode_connection_string(args[0])
+    except ApiError as e:
+        print(f"{RED}{e}{NC}\n")
+        print(CONFIG_HELP)
+        sys.exit(1)
+    cfg = {"url": data["url"], "token": data["token"]}
+    save_config(cfg)
+    print(f"{GREEN}Config imported.{NC} URL: {cfg['url']}")
+
+
+# ---------------------------------------------------------------------------
+# full-command subcommands (everything except 'config', see above)
+# ---------------------------------------------------------------------------
+
+def cmd_list(args):
+    client = connect()
+    data = run_safely(client.get_config)
+    print_routes(data.get("routes", []))
+
+
+def cmd_show(args):
+    client = connect()
+    data = run_safely(client.get_config)
+    route = find_route(data.get("routes", []), args.id)
+    print(f"Domain: {route.get('domain')}")
+    print(f"Status: {route.get('status')}")
+    print("Source:")
+    print(route.get("source", ""))
+
+
+def cmd_add(args):
+    client = connect()
+    domain = args.domain or input("Domain: ").strip()
+    if args.raw:
+        source = args.raw
+    else:
+        target = args.target
+        if target is None:
+            target = input("Reverse proxy target (blank for none): ").strip() or None
+        source = build_site_block(domain, target, args.tls, None)
+    status = "OFF" if args.disabled else "ON"
+    result = run_safely(client.create_route, source, status)
+    print(f"{GREEN}Added:{NC} {result['route']['domain']} [{status}] (id: {result['route']['id']})")
+
+
+def cmd_edit(args):
+    client = connect()
+    data = run_safely(client.get_config)
+    route = find_route(data.get("routes", []), args.id)
+
+    if args.raw:
+        source = args.raw
+    else:
+        domain = args.domain or route.get("domain", "")
+        target = args.target if args.target is not None else route.get("reverse_proxy", "") or None
+        tls_mode = args.tls or route.get("tls", {}).get("mode")
+        source = build_site_block(domain, target, tls_mode, None)
+
+    status = route.get("status", "ON")
+    if args.enable:
+        status = "ON"
+    if args.disable:
+        status = "OFF"
+
+    result = run_safely(client.update_route, args.id, source, status)
+    print(f"{GREEN}Updated:{NC} {result['route']['domain']} [{status}]")
+
+
+def cmd_toggle(args):
+    client = connect()
+    result = run_safely(client.toggle_route, args.id)
+    print(f"{GREEN}Route is now {result['status']}{NC}")
+
+
+def cmd_delete(args):
+    client = connect()
+    if not args.yes:
+        confirm = input(f"Delete route {args.id}? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Cancelled.")
+            return
+    result = run_safely(client.delete_route, args.id)
+    print(f"{GREEN}Deleted:{NC} {result['removed']}")
+
+
+def cmd_reload(args):
+    client = connect()
+    run_safely(client.reload)
+    print(f"{GREEN}Caddy reloaded.{NC}")
+
+
+def cmd_url(args):
+    cfg = load_config()
+    print(cfg.get("url", "(not set)"))
+
+
+# ---------------------------------------------------------------------------
+# interactive mode (numbered menu - dependency-free "TUI")
+# ---------------------------------------------------------------------------
+
+def interactive_menu():
+    cfg = load_config()
+    if not cfg.get("url") or not cfg.get("token"):
+        print(f"{YELLOW}First-time setup{NC}")
+        print("1) Paste a connection string (from 'config export' or the web UI's CLI Connect panel)")
+        print("2) Enter URL + password (exchanged for a token automatically)")
+        print("3) Enter URL + token directly")
+        setup_choice = input("> ").strip()
+
+        if setup_choice == "1":
+            blob = input("Connection string: ").strip()
+            try:
+                data = decode_connection_string(blob)
+                cfg = {"url": data["url"], "token": data["token"]}
+            except ApiError as e:
+                print(f"{RED}{e}{NC}")
+                return
+        elif setup_choice == "3":
+            url = input("Caddedit server URL (e.g. http://1.2.3.4:29048): ").strip()
+            token = getpass.getpass("Token: ")
+            cfg = {"url": url, "token": token}
+        else:
+            url = input("Caddedit server URL (e.g. http://1.2.3.4:29048): ").strip()
+            password = getpass.getpass("Unlock password: ")
+            try:
+                token = ApiClient.fetch_token(url, password)
+            except ApiError as e:
+                print(f"{RED}Login failed: {e}{NC}")
+                return
+            cfg = {"url": url, "token": token}
+        save_config(cfg)
+
+    while True:
+        print(f"\n{CYAN}=== caddedit  ({cfg['url']}) ==={NC}")
+        print("1) List routes")
+        print("2) Show route detail")
+        print("3) Add route")
+        print("4) Edit route")
+        print("5) Toggle route")
+        print("6) Delete route")
+        print("7) Reload Caddy")
+        print("8) Re-login with password (gets a fresh token)")
+        print("9) Set URL or token manually")
+        print("10) Import a connection string")
+        print("11) Export a connection string (to set up another machine)")
+        print("0) Quit")
+        choice = input("> ").strip()
+
+        try:
+            if choice == "1":
+                client = ApiClient(cfg["url"], cfg["token"])
+                print_routes(client.get_config().get("routes", []))
+
+            elif choice == "2":
+                client = ApiClient(cfg["url"], cfg["token"])
+                data = client.get_config()
+                route_id = input("Route ID: ").strip()
+                route = find_route(data.get("routes", []), route_id)
+                print(f"Domain: {route.get('domain')}")
+                print(f"Status: {route.get('status')}")
+                print("Source:")
+                print(route.get("source", ""))
+
+            elif choice == "3":
+                domain = input("Domain: ").strip()
+                target = input("Reverse proxy target (blank for none): ").strip() or None
+                tls_mode = input("TLS mode (blank for default): ").strip() or None
+                disabled = input("Start disabled? [y/N]: ").strip().lower() == "y"
+                source = build_site_block(domain, target, tls_mode, None)
+                client = ApiClient(cfg["url"], cfg["token"])
+                result = client.create_route(source, "OFF" if disabled else "ON")
+                print(f"{GREEN}Added:{NC} {result['route']['domain']} (id: {result['route']['id']})")
+
+            elif choice == "4":
+                client = ApiClient(cfg["url"], cfg["token"])
+                data = client.get_config()
+                route_id = input("Route ID: ").strip()
+                route = find_route(data.get("routes", []), route_id)
+                target = input(f"New reverse proxy target [{route.get('reverse_proxy','')}]: ").strip() or route.get("reverse_proxy") or None
+                tls_mode = route.get("tls", {}).get("mode")
+                source = build_site_block(route.get("domain", ""), target, tls_mode, None)
+                result = client.update_route(route_id, source, route.get("status", "ON"))
+                print(f"{GREEN}Updated:{NC} {result['route']['domain']}")
+
+            elif choice == "5":
+                client = ApiClient(cfg["url"], cfg["token"])
+                route_id = input("Route ID: ").strip()
+                result = client.toggle_route(route_id)
+                print(f"{GREEN}Route is now {result['status']}{NC}")
+
+            elif choice == "6":
+                route_id = input("Route ID: ").strip()
+                if input(f"Delete {route_id}? [y/N]: ").strip().lower() == "y":
+                    client = ApiClient(cfg["url"], cfg["token"])
+                    result = client.delete_route(route_id)
+                    print(f"{GREEN}Deleted:{NC} {result['removed']}")
+                else:
+                    print("Cancelled.")
+
+            elif choice == "7":
+                client = ApiClient(cfg["url"], cfg["token"])
+                client.reload()
+                print(f"{GREEN}Caddy reloaded.{NC}")
+
+            elif choice == "8":
+                url = input(f"URL [{cfg['url']}]: ").strip() or cfg["url"]
+                password = getpass.getpass("Unlock password: ")
+                try:
+                    token = ApiClient.fetch_token(url, password)
+                except ApiError as e:
+                    print(f"{RED}Login failed: {e}{NC}")
+                    continue
+                cfg = {"url": url, "token": token}
+                save_config(cfg)
+                print(f"{GREEN}Saved.{NC}")
+
+            elif choice == "9":
+                url = input(f"URL [{cfg['url']}]: ").strip() or cfg["url"]
+                token = getpass.getpass("Token (blank to keep current): ") or cfg["token"]
+                cfg = {"url": url, "token": token}
+                save_config(cfg)
+                print(f"{GREEN}Saved.{NC}")
+
+            elif choice == "10":
+                blob = input("Paste connection string: ").strip()
+                try:
+                    data = decode_connection_string(blob)
+                    cfg = {"url": data["url"], "token": data["token"]}
+                    save_config(cfg)
+                    print(f"{GREEN}Imported.{NC} URL: {cfg['url']}")
+                except ApiError as e:
+                    print(f"{RED}{e}{NC}")
+
+            elif choice == "11":
+                print(encode_connection_string(cfg))
+
+            elif choice == "0":
+                break
+            else:
+                print(f"{RED}Unknown option.{NC}")
+
+        except ApiError as e:
+            print(f"{RED}Error: {e}{NC}")
+
+
+# ---------------------------------------------------------------------------
+# argparse wiring (full-command mode) - 'config' is intentionally NOT a real
+# argparse subparser; it's intercepted in main() so a bare positional
+# connection string works without colliding with named subcommands.
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="caddedit", description="CLI client for the Caddedit API")
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("config", help="Configure connection - run 'caddedit config --help' for details")
+
+    p_list = sub.add_parser("list", help="List all routes")
+    p_list.set_defaults(func=cmd_list)
+
+    p_show_route = sub.add_parser("show", help="Show a route's full detail/source")
+    p_show_route.add_argument("id")
+    p_show_route.set_defaults(func=cmd_show)
+
+    p_add = sub.add_parser("add", help="Add a new route")
+    p_add.add_argument("--domain")
+    p_add.add_argument("--target", help="reverse_proxy target, e.g. 127.0.0.1:8080")
+    p_add.add_argument("--tls", help="TLS mode, e.g. internal, cloudflare")
+    p_add.add_argument("--raw", help="full raw Caddy site block - overrides --target/--tls")
+    p_add.add_argument("--disabled", action="store_true", help="create the route disabled (OFF)")
+    p_add.set_defaults(func=cmd_add)
+
+    p_edit = sub.add_parser("edit", help="Edit an existing route")
+    p_edit.add_argument("id")
+    p_edit.add_argument("--domain")
+    p_edit.add_argument("--target")
+    p_edit.add_argument("--tls")
+    p_edit.add_argument("--raw", help="full raw Caddy site block - overrides other flags")
+    p_edit.add_argument("--enable", action="store_true")
+    p_edit.add_argument("--disable", action="store_true")
+    p_edit.set_defaults(func=cmd_edit)
+
+    p_toggle = sub.add_parser("toggle", help="Toggle a route on/off")
+    p_toggle.add_argument("id")
+    p_toggle.set_defaults(func=cmd_toggle)
+
+    p_delete = sub.add_parser("delete", help="Delete a route")
+    p_delete.add_argument("id")
+    p_delete.add_argument("-y", "--yes", action="store_true", help="skip confirmation")
+    p_delete.set_defaults(func=cmd_delete)
+
+    p_reload = sub.add_parser("reload", help="Trigger a Caddy reload")
+    p_reload.set_defaults(func=cmd_reload)
+
+    p_url = sub.add_parser("url", help="Print the configured server URL")
+    p_url.set_defaults(func=cmd_url)
+
+    return parser
+
+
+def main():
+    argv = sys.argv[1:]
+
+    if not argv:
+        interactive_menu()
+        return
+
+    if argv[0] == "config":
+        handle_config(argv[1:])
+        return
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if not hasattr(args, "func"):
+        parser.print_help()
+        return
+
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
