@@ -1,6 +1,6 @@
 # Caddedit
 
-Caddedit 是一個專為 Caddy 打造的 Web 視覺化 Caddyfile 路由器管理器 (TXG1 Router)。
+Caddedit 是一個專為 Caddy 打造的 Web 視覺化 Caddyfile 路由器管理器。
 
 它可以將原本單一且雜亂的 `Caddyfile` 拆分（Split）為獨立的 `.caddy` 虛擬主機設定檔，並提供直覺的 GUI 介面進行路由新增、停用/啟用、TLS 策略設定及額外指令（Directives）管理，同時支援安全備份與 Cohere AI 自動解析。
 
