@@ -48,6 +48,8 @@ enum Cmd {
     Ls {
         #[arg(long)]
         json: bool,
+        /// Substring filter across domain/upstream/tls/directives
+        query: Option<String>,
     },
     /// Print one route's raw site block (interactive picker when omitted)
     Show { domain: Option<String> },
@@ -89,6 +91,9 @@ enum Cmd {
         upstream: Option<String>,
         #[arg(long)]
         tls: Option<String>,
+        /// Add `import request_watch_log` to the block
+        #[arg(long)]
+        watch_log: bool,
         #[arg(long)]
         no_reload: bool,
     },
@@ -117,7 +122,7 @@ fn main() -> std::process::ExitCode {
         None => tui::run(&paths),
         Some(cmd) => match cmd {
             Cmd::Init { force, no_reload } => ops::init::run(&paths, force, no_reload),
-            Cmd::Ls { json } => ops::ls::run(&paths, json),
+            Cmd::Ls { json, query } => ops::ls::run(&paths, json, query.as_deref()),
             Cmd::Show { domain } => ops::show::run(&paths, domain.as_deref()),
             Cmd::On { domains, no_reload } => ops::toggle::enable(&paths, &domains, no_reload),
             Cmd::Off { domains, no_reload } => ops::toggle::disable(&paths, &domains, no_reload),
@@ -131,12 +136,14 @@ fn main() -> std::process::ExitCode {
                 domains,
                 upstream,
                 tls,
+                watch_log,
                 no_reload,
             } => ops::new::run(
                 &paths,
                 domains.as_deref(),
                 upstream.as_deref(),
                 tls.as_deref(),
+                watch_log,
                 no_reload,
             ),
             Cmd::Completions { shell } => {

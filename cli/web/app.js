@@ -33,7 +33,23 @@ async function api(path, opts = {}) {
 /* ---------- rendering ---------- */
 
 function kindLabel(kind) {
-  return { proxy: "proxy", static: "static", other: "simple", raw: "raw" }[kind] || kind;
+  return { proxy: "proxy", php: "php", static: "static", other: "simple", raw: "raw" }[kind] || kind;
+}
+
+let searchQuery = "";
+
+function routeMatches(r, q) {
+  if (!q) return true;
+  const hay = [
+    r.id,
+    r.addresses.join(" "),
+    kindLabel(r.kind),
+    r.upstreams.join(" "),
+    tlsLabel(r.tls),
+    r.watch_log ? "request_watch_log" : "",
+    (r.details || []).join(" "),
+  ].join(" ").toLowerCase();
+  return hay.includes(q);
 }
 
 function tlsLabel(tls) {
@@ -48,9 +64,13 @@ function tlsLabel(tls) {
 function render() {
   const wrap = $("#routes");
   wrap.innerHTML = "";
-  $("#empty").hidden = routes.length > 0;
+  const visible = routes.filter((r) => routeMatches(r, searchQuery));
+  $("#empty").hidden = visible.length > 0;
+  $("#empty").textContent = routes.length === 0
+    ? "No routes yet."
+    : `No routes match “${searchQuery}”.`;
 
-  for (const r of routes) {
+  for (const r of visible) {
     const card = document.createElement("div");
     card.className = "route-card";
 
@@ -71,6 +91,18 @@ function render() {
       tlsLabel(r.tls),
     ].filter(Boolean).join("   ·   ");
     main.append(domains, meta);
+
+    if (r.watch_log || (r.details || []).length) {
+      const bits = [];
+      if (r.watch_log) bits.push("request_watch_log");
+      const det = document.createElement("div");
+      det.className = "route-meta mono";
+      det.style.opacity = "0.75";
+      det.textContent =
+        bits.concat(r.details.slice(0, 4)).join("  ·  ") +
+        (r.details.length > 4 ? `  ·  +${r.details.length - 4} more` : "");
+      main.append(det);
+    }
 
     const actions = document.createElement("div");
     actions.className = "route-actions";
@@ -161,6 +193,16 @@ $("#btn-logout").addEventListener("click", async () => {
 });
 
 /* ---------- reload / theme ---------- */
+
+$("#btn-refresh").addEventListener("click", async () => {
+  await loadAll();
+  toast(`loaded ${routes.length} routes`);
+});
+
+$("#search").addEventListener("input", (e) => {
+  searchQuery = e.target.value.trim().toLowerCase();
+  render();
+});
 
 $("#btn-reload").addEventListener("click", async () => {
   try {
@@ -258,6 +300,7 @@ $("#fab-new").addEventListener("click", () => {
   $("#new-domains").value = "";
   $("#new-upstream").value = "";
   $("#new-tls").value = "internal";
+  $("#new-watch-log").checked = false;
   $("#new-error").textContent = "";
   $("#dlg-new").open = true;
 });
@@ -268,6 +311,7 @@ async function createRoute() {
     domains: $("#new-domains").value,
     upstream: $("#new-upstream").value.trim(),
     tls: $("#new-tls").value,
+    watch_log: $("#new-watch-log").checked,
   };
   try {
     await api("/api/vhosts", { method: "POST", body: JSON.stringify(payload) });

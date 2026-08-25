@@ -33,6 +33,9 @@
     <span id="config-path" class="mono" style="font-size:.75rem;color:rgb(var(--mdui-color-on-surface-variant));"></span>
   </mdui-top-app-bar-title>
   <div id="toolbar" slot="right-side">
+    <mdui-tooltip content="Refresh list">
+      <mdui-button-icon id="btn-refresh"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17.65 6.35A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.76-4.24L13 11h7V4l-3.35 2.35z"/></svg></mdui-button-icon>
+    </mdui-tooltip>
     <mdui-tooltip content="Reload Caddy">
       <mdui-button-icon id="btn-reload"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M11 21h-1l1-7H7.5c-.88 0-.33-.75-.31-.78C8.48 10.94 10.42 7.54 13.01 3h1l-1 7h3.51c.4 0 .62.19.4.66C12.97 17.55 11 21 11 21z"/></svg></mdui-button-icon>
     </mdui-tooltip>
@@ -46,6 +49,8 @@
 </mdui-top-app-bar>
 
 <main>
+  <mdui-text-field id="search" variant="outlined" placeholder="Search domain, upstream, tls…" clearable
+    style="margin-bottom:1rem;"></mdui-text-field>
   <div id="routes"></div>
   <div id="empty" hidden>No routes yet.</div>
 </main>
@@ -75,6 +80,7 @@
       <mdui-menu-item value="internal_explicit">tls internal</mdui-menu-item>
       <mdui-menu-item value="cloudflare">Cloudflare DNS challenge</mdui-menu-item>
     </mdui-select>
+    <mdui-checkbox id="new-watch-log">import request_watch_log</mdui-checkbox>
     <div id="new-error" style="color:rgb(var(--mdui-color-error));white-space:pre-wrap;font-size:.85rem;"></div>
   </div>
   <mdui-button slot="action" variant="text" id="new-cancel">Cancel</mdui-button>

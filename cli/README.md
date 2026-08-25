@@ -2,7 +2,7 @@
 
 # caddedit (CLI)
 
-**Split, inspect and toggle Caddy site blocks — without pain.**
+**Split, inspect and toggle Caddy site blocks ??without pain.**
 
 [![Release](https://img.shields.io/github/v/release/ChiuHuang/Caddedit?style=flat-square&color=2563eb)](https://github.com/ChiuHuang/Caddedit/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/ChiuHuang/Caddedit/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/ChiuHuang/Caddedit/actions/workflows/ci.yml)
@@ -16,11 +16,11 @@ Part of the [Caddedit](https://github.com/ChiuHuang/Caddedit#readme) monorepo.
 ```
 $ caddedit ls
       DOMAINS                                   TYPE    UPSTREAM                        TLS
-● on   app.example.com                           proxy   localhost:3000                  -
-● on   grafana.example.com, metrics.example.com  proxy   localhost:3333, localhost:3334  internal
-○ off  legacy.example.net:8443                   static  -                               acme email
-● on   www.example.net                           static  -                               dns: cloudflare
-● on   edge.example.io                           raw     h2c://backend:9000              -
+??on   app.example.com                           proxy   localhost:3000                  -
+??on   grafana.example.com, metrics.example.com  proxy   localhost:3333, localhost:3334  internal
+??off  legacy.example.net:8443                   static  -                               acme email
+??on   www.example.net                           static  -                               dns: cloudflare
+??on   edge.example.io                           raw     h2c://backend:9000              -
 ```
 
 ## How it works
@@ -38,7 +38,7 @@ to just global options + an `import` line:
 
 Every mutation is validated with `caddy validate` *before* it can go live, and a
 failed reload never leaves you with a broken config. Site blocks are moved
-byte-for-byte — tabs, comments and heredocs stay exactly as you wrote them.
+byte-for-byte ??tabs, comments and heredocs stay exactly as you wrote them.
 Anything the analyzer can't fully understand shows up honestly as `raw` instead
 of being mangled into form fields.
 
@@ -59,9 +59,9 @@ cargo install --git https://github.com/ChiuHuang/Caddedit --path cli
 | Command | What it does |
 | --- | --- |
 | `caddedit init` | Backup + split the monolithic Caddyfile (`--force` re-splits) |
-| `caddedit ls [--json]` | All routes: status, type, upstreams, TLS |
+| caddedit ls [--json] [query] | All routes: status, type, upstreams, TLS �X substring filter included |
 | `caddedit show [domain]` | Print one raw site block |
-| `caddedit new app.com --upstream localhost:3000 --tls internal_explicit` | Scaffold a new route (omit flags for interactive wizard) |
+| `caddedit new app.com --upstream localhost:3000 --tls internal_explicit` | scaffold a route (--watch-log adds the logging snippet; omit flags for wizard) |
 | `caddedit on/off <domain>...` | Enable/disable (moves between folders + reload) |
 | `caddedit rm [domain] [-y]` | Soft-delete into backups/ |
 | `caddedit edit [domain]` | `$EDITOR` on the block, validated on exit |
@@ -83,7 +83,8 @@ Run bare `caddedit` for an interactive browser:
 | `space` / `enter` | Toggle on/off (validated first) |
 | `e` | Edit block in `$EDITOR` |
 | `d`, then `y` | Remove (soft-delete) |
-| `r` / `R` | Reload caddy / refresh list |
+| / | live filter |
+|  / R | Reload caddy / refresh list |
 | `q` | Quit |
 
 ### Web dashboard
@@ -109,7 +110,7 @@ reload button, dark/light theme.
 
 ## Migrating from the legacy Python webui
 
-The file layout is intentionally identical — the new CLI reads the same
+The file layout is intentionally identical ??the new CLI reads the same
 `vhosts/enabled` + `vhosts/disabled` tree the old FastAPI app created, so an
 existing install keeps working with zero conversion:
 
@@ -131,10 +132,10 @@ CADDEDIT_PASSWORD=yourpassword caddedit serve --host 127.0.0.1 --port 29048 \
 
 Notes:
 - Env var names are unchanged (`CADDYFILE_PATH`, `VHOSTS_DIR`,
-  `CADDY_BACKUP_DIR`, `CADDEDIT_PASSWORD`) — copy them from the old `.env`.
+  `CADDY_BACKUP_DIR`, `CADDEDIT_PASSWORD`) ??copy them from the old `.env`.
 - Never re-run `caddedit init` on an already-split config; it detects the
   existing import line and refuses unless `--force`.
-- The Cohere AI parsing layer is gone by design — the CLI reads raw syntax,
+- The Cohere AI parsing layer is gone by design ??the CLI reads raw syntax,
   so there is nothing left to translate.
 - If you used `caddy reload --config ...` customizations, set
   `CADDEDIT_RELOAD_COMMAND` to the same string.

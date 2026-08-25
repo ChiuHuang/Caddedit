@@ -26,6 +26,9 @@ struct App {
     selected: usize,
     message: Option<(String, bool)>, // (text, is_error)
     pending_delete: Option<String>,
+    /// `/`-search: active text and whether the input box has focus.
+    filter: String,
+    input_mode: bool,
 }
 
 pub fn run(paths: &Paths) -> Result<()> {
@@ -40,6 +43,8 @@ pub fn run(paths: &Paths) -> Result<()> {
         selected: 0,
         message: None,
         pending_delete: None,
+        filter: String::new(),
+        input_mode: false,
     };
     app.refresh();
 
@@ -70,31 +75,44 @@ fn event_loop(
                 return Ok(());
             }
             match key.code {
-                KeyCode::Char('q') => return Ok(()),
-                KeyCode::Esc if app.pending_delete.is_some() => {
-                    app.pending_delete = None;
-                    app.set_msg("cancelled", false);
+                KeyCode::Char('q') if !app.input_mode => return Ok(()),
+                KeyCode::Esc if app.input_mode => {
+                    app.filter.clear();
+                    app.input_mode = false;
                 }
                 KeyCode::Esc => return Ok(()),
-                KeyCode::Char('y') => {
+                KeyCode::Char('/') if !app.input_mode => {
+                    app.input_mode = true;
+                    app.pending_delete = None;
+                    app.message = None;
+                }
+                KeyCode::Enter if app.input_mode => app.input_mode = false,
+                KeyCode::Backspace if app.input_mode => {
+                    app.filter.pop();
+                }
+                KeyCode::Char(c) if app.input_mode => {
+                    app.filter.push(c);
+                    app.selected = 0;
+                }
+                KeyCode::Char('y') if !app.input_mode => {
                     if app.pending_delete.take().is_some() {
                         app.delete_selected()?;
                     }
                 }
-                KeyCode::Char('j') | KeyCode::Down => app.next(),
-                KeyCode::Char('k') | KeyCode::Up => app.prev(),
-                KeyCode::Home | KeyCode::Char('g') => app.selected = 0,
-                KeyCode::End | KeyCode::Char('G') => {
-                    app.selected = app.rows.len().saturating_sub(1)
+                KeyCode::Char('j') | KeyCode::Down if !app.input_mode => app.next(),
+                KeyCode::Char('k') | KeyCode::Up if !app.input_mode => app.prev(),
+                KeyCode::Home | KeyCode::Char('g') if !app.input_mode => app.selected = 0,
+                KeyCode::End | KeyCode::Char('G') if !app.input_mode => {
+                    app.selected = app.filtered().len().saturating_sub(1)
                 }
-                KeyCode::Char('R') => {
+                KeyCode::Char('R') if !app.input_mode => {
                     app.refresh();
                     app.set_msg(format!("{} routes", app.rows.len()), false);
                 }
-                KeyCode::Char('r') => app.reload_caddy(),
-                KeyCode::Char(' ') | KeyCode::Enter => app.toggle()?,
-                KeyCode::Char('e') => app.edit_selected()?,
-                KeyCode::Char('d') => {
+                KeyCode::Char('r') if !app.input_mode => app.reload_caddy(),
+                KeyCode::Char(' ') | KeyCode::Enter if !app.input_mode => app.toggle()?,
+                KeyCode::Char('e') if !app.input_mode => app.edit_selected()?,
+                KeyCode::Char('d') if !app.input_mode => {
                     if let Some(id) = app.selected_id() {
                         app.pending_delete = Some(id);
                         app.message = None;
@@ -112,9 +130,36 @@ impl App {
             .into_iter()
             .map(|(_, s)| s)
             .collect();
-        if self.selected >= self.rows.len() {
-            self.selected = self.rows.len().saturating_sub(1);
+        let len = self.filtered().len();
+        if self.selected >= len {
+            self.selected = len.saturating_sub(1);
         }
+    }
+
+    /// Indices into `rows` matching the current `/`-filter.
+    fn filtered(&self) -> Vec<usize> {
+        let q = self.filter.to_lowercase();
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                if q.is_empty() {
+                    return true;
+                }
+                let hay = [
+                    r.id.as_str(),
+                    &r.info.addresses.join(" "),
+                    &r.info.upstreams.join(" "),
+                    tls_label(&r.info).as_str(),
+                    r.info.directives.join(" ").as_str(),
+                    kind_label(r.info.kind),
+                ]
+                .join(" ")
+                .to_lowercase();
+                hay.contains(&q)
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 
     fn set_msg(&mut self, text: impl Into<String>, is_error: bool) {
@@ -122,7 +167,7 @@ impl App {
     }
 
     fn next(&mut self) {
-        if self.selected + 1 < self.rows.len() {
+        if self.selected + 1 < self.filtered().len() {
             self.selected += 1;
         }
     }
@@ -132,7 +177,10 @@ impl App {
     }
 
     fn selected_id(&self) -> Option<String> {
-        self.rows.get(self.selected).map(|r| r.id.clone())
+        let vis = self.filtered();
+        vis.get(self.selected)
+            .and_then(|&i| self.rows.get(i))
+            .map(|r| r.id.clone())
     }
 
     /// Re-scan to get an owned handle for the currently selected row.
@@ -233,6 +281,7 @@ impl App {
 fn kind_style(kind: SiteKind) -> Style {
     match kind {
         SiteKind::Proxy => Style::new().fg(Color::Cyan),
+        SiteKind::Php => Style::new().fg(Color::Blue),
         SiteKind::Static => Style::new().fg(Color::Yellow),
         SiteKind::Other => Style::new().fg(Color::Gray),
         SiteKind::Raw => Style::new().fg(Color::Magenta),
@@ -242,6 +291,7 @@ fn kind_style(kind: SiteKind) -> Style {
 fn kind_label(kind: SiteKind) -> &'static str {
     match kind {
         SiteKind::Proxy => "proxy",
+        SiteKind::Php => "php",
         SiteKind::Static => "static",
         SiteKind::Other => "other",
         SiteKind::Raw => "raw",
@@ -267,20 +317,27 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
     ])
     .areas(area);
 
-    let on = app
-        .rows
+    let vis = app.filtered();
+    let on = vis
         .iter()
-        .filter(|r| r.status == vhost::Status::On)
+        .filter(|&&i| app.rows[i].status == vhost::Status::On)
         .count();
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" caddedit ", Style::new().bold().fg(Color::Cyan)),
             Span::raw(app.paths.caddyfile.display().to_string()),
             Span::raw("   "),
-            Span::styled(
-                format!("{on} on / {} total", app.rows.len()),
-                Style::new().dim(),
-            ),
+            if app.filter.is_empty() {
+                Span::styled(
+                    format!("{on} on / {} total", app.rows.len()),
+                    Style::new().dim(),
+                )
+            } else {
+                Span::styled(
+                    format!("{}/{} match \"{}\"", vis.len(), app.rows.len(), app.filter),
+                    Style::new().fg(Color::Cyan),
+                )
+            },
         ])),
         title_area,
     );
@@ -288,8 +345,9 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
     let header = Row::new(["", "DOMAINS", "TYPE", "UPSTREAM", "TLS"])
         .style(Style::new().bold().underlined());
 
-    let rows = app.rows.iter().enumerate().map(|(i, r)| {
-        let selected = i == app.selected;
+    let rows = vis.iter().enumerate().map(|(pos, &ri)| {
+        let r = &app.rows[ri];
+        let selected = pos == app.selected;
         let base = if selected {
             Style::new().add_modifier(Modifier::REVERSED)
         } else {
@@ -332,8 +390,15 @@ fn draw(f: &mut ratatui::Frame, app: &App) {
     f.render_widget(table, table_area);
 
     let help =
-        "j/k move   space toggle   e edit   d rm   y confirm   r reload   R refresh   q quit";
-    let line = if let Some(id) = &app.pending_delete {
+        "j/k move   space toggle   e edit   d rm   y confirm   / filter   r reload   R refresh   q quit";
+    let line = if app.input_mode {
+        Line::from(vec![
+            Span::styled(" filter: ", Style::new().fg(Color::Cyan).bold()),
+            Span::raw(app.filter.clone()),
+            Span::styled("_", Style::new().fg(Color::Cyan)),
+            Span::styled("   (enter apply · esc clear)", Style::new().dim()),
+        ])
+    } else if let Some(id) = &app.pending_delete {
         Line::from(Span::styled(
             format!(" delete {id}? y to confirm, esc to cancel"),
             Style::new().fg(Color::Red).bold(),

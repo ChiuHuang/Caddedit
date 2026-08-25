@@ -18,6 +18,7 @@ pub fn run(
     cli_domains: Option<&str>,
     cli_upstream: Option<&str>,
     cli_tls: Option<&str>,
+    watch_log: bool,
     no_reload: bool,
 ) -> Result<()> {
     let domains_raw = match cli_domains {
@@ -47,7 +48,13 @@ pub fn run(
         None => choose_tls()?,
     };
 
-    let target = vhost::create_vhost_file(paths, &domains, &upstream, &tls)?;
+    let watch_log = if !watch_log && cli_domains.is_none() {
+        crate::ops::confirm("add 'import request_watch_log'")?
+    } else {
+        watch_log
+    };
+
+    let target = vhost::create_vhost_file(paths, &domains, &upstream, &tls, watch_log)?;
     println!("{} {}", "+".green(), target.display());
     println!("{}", std::fs::read_to_string(&target)?.dimmed());
 

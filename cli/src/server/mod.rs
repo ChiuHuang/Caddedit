@@ -133,6 +133,8 @@ struct CreateReq {
     upstream: String,
     #[serde(default = "default_tls")]
     tls: String,
+    #[serde(default)]
+    watch_log: bool,
 }
 fn default_tls() -> String {
     "internal".into()
@@ -371,8 +373,9 @@ async fn create_vhost(State(st): State<SharedState>, Json(req): Json<CreateReq>)
     let paths = st.paths.clone();
     let upstream = req.upstream.trim().to_string();
     let tls = req.tls.clone();
+    let watch_log = req.watch_log;
     let result = tokio::task::spawn_blocking(move || {
-        vhost::create_vhost_file(&paths, &domains, &upstream, &tls)
+        vhost::create_vhost_file(&paths, &domains, &upstream, &tls, watch_log)
     })
     .await;
 

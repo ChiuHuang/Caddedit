@@ -1,12 +1,29 @@
-//! `caddedit ls` — the money shot: every route at a glance.
+//! `caddedit ls` ??the money shot: every route at a glance.
 
 use crate::caddyfile::analyze::SiteKind;
 use crate::config::Paths;
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
-pub fn run(paths: &Paths, json: bool) -> Result<()> {
-    let rows = crate::vhost::summarize(paths);
+pub fn run(paths: &Paths, json: bool, query: Option<&str>) -> Result<()> {
+    let mut rows = crate::vhost::summarize(paths);
+
+    // optional substring filter across every visible field
+    if let Some(q) = query.map(str::trim).filter(|s| !s.is_empty()) {
+        let q = q.to_lowercase();
+        rows.retain(|(_, s)| {
+            let hay = [
+                s.id.as_str(),
+                s.info.addresses.join(" ").as_str(),
+                s.info.upstreams.join(" ").as_str(),
+                s.info.directives.join(" ").as_str(),
+                tls_plain(&s.info).as_str(),
+            ]
+            .join(" ")
+            .to_lowercase();
+            hay.contains(&q)
+        });
+    }
 
     if json {
         let vals: Vec<serde_json::Value> = rows
@@ -19,7 +36,7 @@ pub fn run(paths: &Paths, json: bool) -> Result<()> {
 
     if rows.is_empty() {
         println!(
-            "no vhosts under {} — run `{}` first",
+            "no vhosts under {} ??run `{}` first",
             paths.vhosts_dir.display(),
             "caddedit init".bright_cyan()
         );
@@ -32,8 +49,8 @@ pub fn run(paths: &Paths, json: bool) -> Result<()> {
     for (_, s) in &rows {
         table.push([
             match s.status {
-                crate::vhost::Status::On => "● on".green().to_string(),
-                crate::vhost::Status::Off => "○ off".dimmed().to_string(),
+                crate::vhost::Status::On => "??on".green().to_string(),
+                crate::vhost::Status::Off => "??off".dimmed().to_string(),
             },
             s.info.addresses.join(", "),
             kind_label(s.info.kind)
@@ -67,14 +84,26 @@ pub fn run(paths: &Paths, json: bool) -> Result<()> {
 fn kind_label(kind: SiteKind) -> (&'static str, owo_colors::AnsiColors) {
     match kind {
         SiteKind::Proxy => ("proxy", owo_colors::AnsiColors::Cyan),
+        SiteKind::Php => ("php", owo_colors::AnsiColors::Blue),
         SiteKind::Static => ("static", owo_colors::AnsiColors::Yellow),
         SiteKind::Other => ("other", owo_colors::AnsiColors::White),
         SiteKind::Raw => ("raw", owo_colors::AnsiColors::Magenta),
     }
 }
 
+/// Color-free TLS description, reused by the search filter.
+use crate::caddyfile::analyze::TlsMode;
+fn tls_plain(info: &crate::caddyfile::analyze::SiteInfo) -> String {
+    match &info.tls {
+        None => "-".to_string(),
+        Some(t) => match (&t.detail, t.mode.label()) {
+            (Some(d), label) => format!("{label} ({d})"),
+            (None, label) => label.to_string(),
+        },
+    }
+}
+
 fn tls_label(info: &crate::caddyfile::analyze::SiteInfo) -> String {
-    use crate::caddyfile::analyze::TlsMode;
     match &info.tls {
         None => "-".dimmed().to_string(),
         Some(t) => match t.mode {

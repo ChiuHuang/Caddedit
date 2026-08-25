@@ -181,8 +181,11 @@ pub fn read_raw(vf: &VhostFile) -> Result<String> {
 }
 
 /// Generate a fresh site block for `caddedit new` and the web UI.
-pub fn scaffold_block(domains: &[String], upstream: &str, tls: &str) -> String {
+pub fn scaffold_block(domains: &[String], upstream: &str, tls: &str, watch_log: bool) -> String {
     let mut s = format!("{} {{\n", domains.join(", "));
+    if watch_log {
+        s.push_str("\timport request_watch_log\n");
+    }
     if !upstream.is_empty() {
         s.push_str(&format!("\treverse_proxy {upstream}\n"));
     }
@@ -206,6 +209,7 @@ pub fn create_vhost_file(
     domains: &[String],
     upstream: &str,
     tls: &str,
+    watch_log: bool,
 ) -> Result<PathBuf> {
     let stem = sanitize_address(&domains[0]);
     std::fs::create_dir_all(paths.enabled_dir())?;
@@ -215,7 +219,7 @@ pub fn create_vhost_file(
         target = paths.enabled_dir().join(format!("{stem}-{n}.caddy"));
         n += 1;
     }
-    let block = scaffold_block(domains, upstream, tls);
+    let block = scaffold_block(domains, upstream, tls, watch_log);
     fsutil::atomic_write(&target, &block)?;
     if crate::caddy::caddy_available() {
         if let Err(e) = crate::caddy::validate_file(&target) {
