@@ -1,14 +1,25 @@
-# Caddedit CLI
+<div align="center">
 
-Split, inspect and toggle **Caddy** site blocks without pain. One static binary — no Python, no Node, no daemon required.
+# caddedit (CLI)
+
+**Split, inspect and toggle Caddy site blocks — without pain.**
+
+[![Release](https://img.shields.io/github/v/release/ChiuHuang/Caddedit?style=flat-square&color=2563eb)](https://github.com/ChiuHuang/Caddedit/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/ChiuHuang/Caddedit/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/ChiuHuang/Caddedit/actions/workflows/ci.yml)
+
+Part of the [Caddedit](https://github.com/ChiuHuang/Caddedit#readme) monorepo.
+
+</div>
+
+---
 
 ```
 $ caddedit ls
       DOMAINS                                   TYPE    UPSTREAM                        TLS
 ● on   app.example.com                           proxy   localhost:3000                  -
 ● on   grafana.example.com, metrics.example.com  proxy   localhost:3333, localhost:3334  internal
-○ off  legacy.example.net:8443                   static  -                               acme email (me@example.com)
-● on   www.example.net                           static  -                               dns challenge (cloudflare)
+○ off  legacy.example.net:8443                   static  -                               acme email
+● on   www.example.net                           static  -                               dns: cloudflare
 ● on   edge.example.io                           raw     h2c://backend:9000              -
 ```
 
