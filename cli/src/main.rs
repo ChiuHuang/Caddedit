@@ -104,6 +104,12 @@ enum Cmd {
 }
 
 fn main() -> std::process::ExitCode {
+    // Rust ignores SIGPIPE by default; `caddedit ls | head` must not panic.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let cli = Cli::parse();
     let paths = Paths::resolve(cli.config.clone(), cli.vhosts_dir.clone());
 
