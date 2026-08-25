@@ -1,4 +1,4 @@
-/* Caddedit dashboard ??vanilla JS + MDUI 2 web components. */
+/* Caddedit dashboard — vanilla JS + MDUI 2 web components. */
 "use strict";
 
 const $ = (s) => document.querySelector(s);
@@ -10,6 +10,7 @@ const ICONS = {
 
 let routes = [];
 let authRequired = false;
+let searchQuery = "";
 
 function toast(msg, action) {
   mdui.snackbar({ message: msg, placement: "bottom", timeout: 4000, ...action });
@@ -36,7 +37,14 @@ function kindLabel(kind) {
   return { proxy: "proxy", php: "php", static: "static", other: "simple", raw: "raw" }[kind] || kind;
 }
 
-let searchQuery = "";
+function tlsLabel(tls) {
+  if (!tls) return "no tls";
+  if (tls.mode === "internal") return "tls internal";
+  if (tls.mode === "acme_email") return `acme (${tls.detail || ""})`;
+  if (tls.mode === "dns") return `dns: ${tls.detail || "?"}`;
+  if (tls.mode === "manual") return "cert/key";
+  return tls.detail || "custom";
+}
 
 function routeMatches(r, q) {
   if (!q) return true;
@@ -52,23 +60,13 @@ function routeMatches(r, q) {
   return hay.includes(q);
 }
 
-function tlsLabel(tls) {
-  if (!tls || tls.mode === "none") return "no tls";
-  if (tls.mode === "internal") return "tls internal";
-  if (tls.mode === "acme_email") return `acme (${tls.detail || ""})`;
-  if (tls.mode === "dns") return `dns: ${tls.detail || "?"}`;
-  if (tls.mode === "manual") return `cert/key`;
-  return tls.detail || "custom";
-}
-
 function render() {
   const wrap = $("#routes");
   wrap.innerHTML = "";
   const visible = routes.filter((r) => routeMatches(r, searchQuery));
   $("#empty").hidden = visible.length > 0;
-  $("#empty").textContent = routes.length === 0
-    ? "No routes yet."
-    : `No routes match ??{searchQuery}??`;
+  $("#empty").textContent =
+    routes.length === 0 ? "No routes yet." : `No routes match "${searchQuery}".`;
 
   for (const r of visible) {
     const card = document.createElement("div");
@@ -76,7 +74,6 @@ function render() {
 
     const sw = document.createElement("mdui-switch");
     sw.checked = r.status === "on";
-    sw.setAttribute("aria-label", "toggle route");
 
     const main = document.createElement("div");
     main.className = "route-main";
@@ -92,15 +89,16 @@ function render() {
     ].filter(Boolean).join("   ·   ");
     main.append(domains, meta);
 
-    if (r.watch_log || (r.details || []).length) {
-      const bits = [];
-      if (r.watch_log) bits.push("request_watch_log");
+    const bits = [];
+    if (r.watch_log) bits.push("request_watch_log");
+    for (const d of (r.details || []).slice(0, 4)) bits.push(d);
+    if (bits.length) {
       const det = document.createElement("div");
       det.className = "route-meta mono";
       det.style.opacity = "0.75";
       det.textContent =
-        bits.concat(r.details.slice(0, 4)).join("  ·  ") +
-        (r.details.length > 4 ? `  ·  +${r.details.length - 4} more` : "");
+        bits.join("  ·  ") +
+        ((r.details || []).length > 4 ? `  ·  +${r.details.length - 4} more` : "");
       main.append(det);
     }
 
@@ -192,16 +190,11 @@ $("#btn-logout").addEventListener("click", async () => {
   if (authRequired) openLogin();
 });
 
-/* ---------- reload / theme ---------- */
+/* ---------- toolbar ---------- */
 
 $("#btn-refresh").addEventListener("click", async () => {
   await loadAll();
   toast(`loaded ${routes.length} routes`);
-});
-
-$("#search").addEventListener("input", (e) => {
-  searchQuery = e.target.value.trim().toLowerCase();
-  render();
 });
 
 $("#btn-reload").addEventListener("click", async () => {
@@ -211,6 +204,11 @@ $("#btn-reload").addEventListener("click", async () => {
   } catch (e) {
     toast(e.message, { action: "dismiss" });
   }
+});
+
+$("#search").addEventListener("input", (e) => {
+  searchQuery = e.target.value.trim().toLowerCase();
+  render();
 });
 
 /* ---------- theme + settings ---------- */
@@ -252,76 +250,6 @@ $("#set-theme").addEventListener("change", () => {
   if (sel) applyTheme(sel.value);
 });
 
-/* ---------- self-update ---------- */
-
-function setUpdText(html) {
-  $("#upd-status").innerHTML = html;
-}
-
-async function checkForUpdates(silent) {
-  if (!silent) setUpdText("checking??);
-  try {
-    const r = await api("/api/update/check");
-    document.querySelectorAll(".cur-version").forEach((el) => (el.textContent = r.current));
-    if (!r.supported) {
-      setUpdText(`v${r.current} ??auto-update unsupported here`);
-      return;
-    }
-    if (r.error) {
-      setUpdText(`v${r.current} ??check failed: ${r.error}`);
-      return;
-    }
-    if (r.up_to_date) {
-      setUpdText(`v${r.current} ??up to date`);
-      $("#btn-upd-apply").hidden = true;
-      return;
-    }
-    setUpdText(
-      `<b style="color:rgb(var(--mdui-color-primary))">v${r.latest} available</b> (installed: v${r.current})`
-    );
-    const btn = $("#btn-upd-apply");
-    btn.hidden = false;
-    btn.loading = false;
-    btn.textContent = `Update to v${r.latest}`;
-    btn.dataset.version = r.latest;
-  } catch (e) {
-    if (!silent) setUpdText(`check failed: ${e.message}`);
-  }
-}
-
-$("#btn-upd-check").addEventListener("click", () => checkForUpdates(false));
-
-$("#btn-upd-apply").addEventListener("click", async () => {
-  const btn = $("#btn-upd-apply");
-  const target = btn.dataset.version;
-  btn.loading = true;
-  setUpdText(`downloading and installing v${target}?�`);
-  try {
-    await api("/api/update", { method: "POST" });
-  } catch (e) {
-    btn.loading = false;
-    setUpdText(`update failed: ${e.message}`);
-    return;
-  }
-  setUpdText("installed ??restarting service??);
-  // the server is about to vanish; poll until it comes back on the new version
-  for (let i = 0; i < 30; i++) {
-    await new Promise((res) => setTimeout(res, 1500));
-    try {
-      const st = await fetch("/api/status", { credentials: "same-origin" });
-      if (!st.ok) continue;
-      const body = await st.json();
-      if (body.version === target.replace(/^v/, "")) {
-        toast(`updated to v${body.version}`);
-        location.reload();
-        return;
-      }
-    } catch (_) { /* still restarting */ }
-  }
-  btn.loading = false;
-  setUpdText("restart timed out ??check `systemctl status caddedit-dashboard`");
-});
-
 (function initSettings() {
   const sw = $("#swatches");
   for (const [name, hex] of ACCENTS) {
@@ -336,20 +264,14 @@ $("#btn-upd-apply").addEventListener("click", async () => {
   applyTheme(localStorage.getItem("caddedit-theme") || "dark");
 })();
 
-/* quick toggle: dark <-> light */
 $("#btn-theme").addEventListener("click", () => {
-  const dark =
-    document.documentElement.classList.contains("mdui-theme-dark") ||
-    (!document.documentElement.classList.contains("mdui-theme-light") &&
-      localStorage.getItem("caddedit-theme") !== "light" &&
-      localStorage.getItem("caddedit-theme") === "dark");
-  applyTheme(dark ? "light" : "dark");
+  const cur = localStorage.getItem("caddedit-theme") || "dark";
+  applyTheme(cur === "dark" ? "light" : "dark");
 });
 
 /* ---------- editor dialog ---------- */
 
 let editingId = null;
-let editingRoute = null;
 
 function parsedHtml(r) {
   const rows = [];
@@ -358,7 +280,7 @@ function parsedHtml(r) {
     simple: "#90a4ae", other: "#90a4ae", raw: "#ef5350",
   }[kindLabel(r.kind)] || "#90a4ae";
   rows.push(`<div class="parsed-row"><b>Type</b><span class="chip" style="background:${chipColor}33;color:${chipColor}">${kindLabel(r.kind)}</span></div>`);
-  rows.push(`<div class="parsed-row"><b>Domains</b>${(r.addresses.join(", ") || r.id)}</div>`);
+  rows.push(`<div class="parsed-row"><b>Domains</b>${r.addresses.join(", ") || r.id}</div>`);
   if (r.upstreams.length)
     rows.push(`<div class="parsed-row"><b>Upstream</b>${r.upstreams.join(", ")}</div>`);
   if (r.tls) rows.push(`<div class="parsed-row"><b>TLS</b>${tlsLabel(r.tls)}</div>`);
@@ -368,14 +290,13 @@ function parsedHtml(r) {
     rows.push(`<div class="parsed-row"><b>Directives</b>${r.details.map((d) => `· ${d}`).join("<br>")}</div>`);
   }
   if (r.kind === "raw") {
-    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser doesn't fully model ??edit the raw source on the left.</div>`);
+    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser does not fully model — edit the raw source on the left.</div>`);
   }
   return rows.join("");
 }
 
 async function openEditor(r) {
   editingId = r.id;
-  editingRoute = r;
   $("#edit-id").textContent = r.id;
   $("#edit-error").textContent = "";
   $("#parsed-body").innerHTML = parsedHtml(r);
@@ -418,7 +339,7 @@ async function saveEditor() {
 async function removeRoute(r) {
   const ok = await mdui.confirm({
     headline: `Remove ${r.id}?`,
-    description: "The file moves to the backups folder ??recoverable.",
+    description: "The file moves to the backups folder — recoverable.",
     confirmText: "Remove",
     cancelText: "Keep",
   });
@@ -433,13 +354,6 @@ async function removeRoute(r) {
 }
 
 /* ---------- create ---------- */
-
-const TLS_SNIPPETS = {
-  none: "",
-  internal: "",
-  internal_explicit: "\n\ttls internal",
-  cloudflare: `\n\ttls {\n\t\tdns cloudflare {$CF_API_TOKEN}\n\t}`,
-};
 
 $("#fab-new").addEventListener("click", () => {
   $("#new-domains").value = "";
@@ -467,6 +381,75 @@ async function createRoute() {
     $("#new-error").textContent = e.body?.error || e.message;
   }
 }
+
+/* ---------- self-update ---------- */
+
+function setUpdText(html) {
+  $("#upd-status").innerHTML = html;
+}
+
+async function checkForUpdates(silent) {
+  if (!silent) setUpdText("checking...");
+  try {
+    const r = await api("/api/update/check");
+    document.querySelectorAll(".cur-version").forEach((el) => (el.textContent = r.current));
+    if (!r.supported) {
+      setUpdText(`v${r.current} — auto-update unsupported here`);
+      return;
+    }
+    if (r.error) {
+      setUpdText(`v${r.current} — check failed: ${r.error}`);
+      return;
+    }
+    if (r.up_to_date) {
+      setUpdText(`v${r.current} — up to date`);
+      $("#btn-upd-apply").hidden = true;
+      return;
+    }
+    setUpdText(
+      `<b style="color:rgb(var(--mdui-color-primary))">v${r.latest} available</b> (installed: v${r.current})`
+    );
+    const btn = $("#btn-upd-apply");
+    btn.hidden = false;
+    btn.loading = false;
+    btn.textContent = `Update to v${r.latest}`;
+    btn.dataset.version = r.latest;
+  } catch (e) {
+    if (!silent) setUpdText(`check failed: ${e.message}`);
+  }
+}
+
+$("#btn-upd-check").addEventListener("click", () => checkForUpdates(false));
+
+$("#btn-upd-apply").addEventListener("click", async () => {
+  const btn = $("#btn-upd-apply");
+  const target = btn.dataset.version;
+  btn.loading = true;
+  setUpdText(`downloading and installing v${target}...`);
+  try {
+    await api("/api/update", { method: "POST" });
+  } catch (e) {
+    btn.loading = false;
+    setUpdText(`update failed: ${e.message}`);
+    return;
+  }
+  setUpdText("installed — restarting service...");
+  for (let i = 0; i < 30; i++) {
+    await new Promise((res) => setTimeout(res, 1500));
+    try {
+      const st = await fetch("/api/status", { credentials: "same-origin" });
+      if (!st.ok) continue;
+      const body = await st.json();
+      if (body.version === target.replace(/^v/, "")) {
+        toast(`updated to v${body.version}`);
+        location.reload();
+        return;
+      }
+    } catch (_) { /* still restarting */ }
+  }
+  btn.loading = false;
+  setUpdText("restart timed out — check systemctl status caddedit-dashboard");
+});
 
 /* ---------- boot ---------- */
 
