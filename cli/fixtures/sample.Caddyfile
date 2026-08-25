@@ -1,0 +1,59 @@
+{
+	email ops@example.com
+	servers {
+		trusted_proxies static 10.0.0.0/8
+	}
+}
+
+(snippets) {
+	encode zstd gzip
+}
+
+# ─── simple reverse proxies ─────────────────────────────────────
+
+app.example.com {
+	reverse_proxy localhost:3000
+}
+
+grafana.example.com, metrics.example.com {
+	reverse_proxy localhost:3333 localhost:3334
+	tls internal
+}
+
+# ─── static site with cloudflare dns challenge ──────────────────
+
+www.example.net {
+	root * /srv/www
+	file_server
+	tls {
+		dns cloudflare {$CF_API_TOKEN}
+	}
+	encode gzip
+	header /assets/* Cache-Control "max-age=31536000"
+}
+
+# ─── php app with heredoc respond ───────────────────────────────
+
+legacy.example.net:8443 {
+	tls me@example.com
+	handle_path /old* {
+		respond <<HTML
+			<h1>moved</h1>
+		HTML
+	}
+	php_fastcgi unix//run/php/php-fpm.sock
+	root * /srv/legacy/public
+	file_server
+}
+
+# ─── exotic config the GUI never understood ─────────────────────
+
+edge.example.io {
+	mystery_directive {http.request.host} foo bar
+	reverse_proxy h2c://backend:9000 {
+		header_up X-Real-IP {remote_host}
+	}
+	log {
+		output file /var/log/caddy/edge.log
+	}
+}

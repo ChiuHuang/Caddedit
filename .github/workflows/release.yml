@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: caddedit
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # static musl builds via zig (works on any glibc, zero deps)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            zig: true
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            zig: true
+            archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+          key: ${{ matrix.target }}
+
+      - name: Build (zig cross)
+        if: matrix.zig
+        uses: houseabsolute/actions-rust-cross@v1
+        with:
+          command: build
+          workdir: cli
+          target: ${{ matrix.target }}
+          args: "--release"
+
+      - name: Build (native)
+        if: ${{ !matrix.zig }}
+        working-directory: cli
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          dir="caddedit-${{ matrix.target }}"
+          mkdir -p "$dir"
+          cp "cli/target/${{ matrix.target }}/release/${BIN_NAME}" "$dir/"
+          cp cli/README.md "$dir/"
+          tar czf "${dir}.tar.gz" "$dir"
+          sha256sum "${dir}.tar.gz" > "${dir}.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $dir = "caddedit-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item "cli/target/${{ matrix.target }}/release/caddedit-cli.exe" "$dir/caddedit.exe"
+          Copy-Item cli/README.md $dir
+          Compress-Archive -Path $dir -DestinationPath "${dir}.zip"
+          (Get-FileHash "${dir}.zip" -Algorithm SHA256).Hash + "  ${dir}.zip" > "${dir}.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            caddedit-*.tar.gz*
+            caddedit-*.zip*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
