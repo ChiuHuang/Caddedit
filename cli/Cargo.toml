@@ -5,6 +5,11 @@ edition = "2021"
 description = "Split, inspect and toggle Caddy site blocks without pain"
 license = "MIT"
 
+# install as `caddedit` everywhere, not `caddedit-cli`
+[[bin]]
+name = "caddedit"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }

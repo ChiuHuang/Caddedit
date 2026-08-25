@@ -53,9 +53,10 @@ jobs:
         uses: houseabsolute/actions-rust-cross@v1
         with:
           command: build
-          workdir: cli
+          working-directory: cli
           target: ${{ matrix.target }}
           args: "--release"
+          use-rust-cache: false
 
       - name: Build (native)
         if: ${{ !matrix.zig }}
@@ -78,7 +79,7 @@ jobs:
         run: |
           $dir = "caddedit-${{ matrix.target }}"
           New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item "cli/target/${{ matrix.target }}/release/caddedit-cli.exe" "$dir/caddedit.exe"
+          Copy-Item "cli/target/${{ matrix.target }}/release/caddedit.exe" "$dir/caddedit.exe"
           Copy-Item cli/README.md $dir
           Compress-Archive -Path $dir -DestinationPath "${dir}.zip"
           (Get-FileHash "${dir}.zip" -Algorithm SHA256).Hash + "  ${dir}.zip" > "${dir}.zip.sha256"
