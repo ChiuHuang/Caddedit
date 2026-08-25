@@ -213,27 +213,102 @@ $("#btn-reload").addEventListener("click", async () => {
   }
 });
 
-const savedTheme = localStorage.getItem("caddedit-theme");
-if (savedTheme) {
-  document.documentElement.classList.toggle("mdui-theme-dark", savedTheme === "dark");
-  document.documentElement.classList.toggle("mdui-theme-light", savedTheme === "light");
+/* ---------- theme + settings ---------- */
+
+const ACCENTS = [
+  ["Purple", "#6750A4"],
+  ["Blue", "#1565C0"],
+  ["Teal", "#00897B"],
+  ["Green", "#2E7D32"],
+  ["Amber", "#B26A00"],
+  ["Red", "#C62828"],
+];
+
+function applyTheme(mode) {
+  mdui.setTheme(mode);
+  localStorage.setItem("caddedit-theme", mode);
+  const group = $("#set-theme");
+  if (group) {
+    for (const b of group.querySelectorAll("mdui-segmented-button")) {
+      b.selected = b.value === mode;
+    }
+  }
 }
+
+function applyAccent(hex) {
+  mdui.setColorScheme(hex);
+  localStorage.setItem("caddedit-accent", hex);
+  document.querySelectorAll(".swatch").forEach((s) => {
+    s.classList.toggle("active", s.dataset.color === hex);
+    s.style.background = s.dataset.color;
+  });
+}
+
+$("#btn-settings").addEventListener("click", () => ($("#dlg-settings").open = true));
+$("#settings-done").addEventListener("click", () => ($("#dlg-settings").open = false));
+
+$("#set-theme").addEventListener("change", () => {
+  const sel = $("#set-theme").querySelector("mdui-segmented-button[selected]");
+  if (sel) applyTheme(sel.value);
+});
+
+(function initSettings() {
+  const sw = $("#swatches");
+  for (const [name, hex] of ACCENTS) {
+    const b = document.createElement("button");
+    b.className = "swatch";
+    b.title = name;
+    b.dataset.color = hex;
+    b.addEventListener("click", () => applyAccent(hex));
+    sw.append(b);
+  }
+  applyAccent(localStorage.getItem("caddedit-accent") || "#6750A4");
+  applyTheme(localStorage.getItem("caddedit-theme") || "dark");
+})();
+
+/* quick toggle: dark <-> light */
 $("#btn-theme").addEventListener("click", () => {
-  const el = document.documentElement;
-  const dark = el.classList.contains("mdui-theme-dark");
-  el.classList.toggle("mdui-theme-dark", !dark);
-  el.classList.toggle("mdui-theme-light", dark);
-  localStorage.setItem("caddedit-theme", dark ? "light" : "dark");
+  const dark =
+    document.documentElement.classList.contains("mdui-theme-dark") ||
+    (!document.documentElement.classList.contains("mdui-theme-light") &&
+      localStorage.getItem("caddedit-theme") !== "light" &&
+      localStorage.getItem("caddedit-theme") === "dark");
+  applyTheme(dark ? "light" : "dark");
 });
 
 /* ---------- editor dialog ---------- */
 
 let editingId = null;
+let editingRoute = null;
+
+function parsedHtml(r) {
+  const rows = [];
+  const chipColor = {
+    proxy: "#26a69a", php: "#42a5f5", static: "#ffb74d",
+    simple: "#90a4ae", other: "#90a4ae", raw: "#ef5350",
+  }[kindLabel(r.kind)] || "#90a4ae";
+  rows.push(`<div class="parsed-row"><b>Type</b><span class="chip" style="background:${chipColor}33;color:${chipColor}">${kindLabel(r.kind)}</span></div>`);
+  rows.push(`<div class="parsed-row"><b>Domains</b>${(r.addresses.join(", ") || r.id)}</div>`);
+  if (r.upstreams.length)
+    rows.push(`<div class="parsed-row"><b>Upstream</b>${r.upstreams.join(", ")}</div>`);
+  if (r.tls) rows.push(`<div class="parsed-row"><b>TLS</b>${tlsLabel(r.tls)}</div>`);
+  if (r.watch_log)
+    rows.push(`<div class="parsed-row"><b>Logging</b><span class="chip">request_watch_log</span></div>`);
+  if ((r.details || []).length) {
+    rows.push(`<div class="parsed-row"><b>Directives</b>${r.details.map((d) => `· ${d}`).join("<br>")}</div>`);
+  }
+  if (r.kind === "raw") {
+    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser doesn't fully model — edit the raw source on the left.</div>`);
+  }
+  return rows.join("");
+}
 
 async function openEditor(r) {
   editingId = r.id;
+  editingRoute = r;
   $("#edit-id").textContent = r.id;
   $("#edit-error").textContent = "";
+  $("#parsed-body").innerHTML = parsedHtml(r);
   const field = $("#edit-content");
   field.loading = true;
   $("#dlg-edit").open = true;
