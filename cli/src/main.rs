@@ -4,6 +4,7 @@ mod config;
 mod fsutil;
 mod ops;
 mod picker;
+mod selfupdate;
 mod server;
 mod tui;
 mod vhost;

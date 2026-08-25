@@ -113,6 +113,16 @@
       <div style="font-weight:500;margin-bottom:.5rem;">Accent color</div>
       <div id="swatches" style="display:flex;gap:.75rem;"></div>
     </div>
+    <div>
+      <div style="font-weight:500;margin-bottom:.5rem;">Updates</div>
+      <div id="upd-status" class="parsed-row" style="margin-bottom:.75rem;">
+        v<span class="cur-version">?</span> installed
+      </div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+        <mdui-button id="btn-upd-check" variant="outlined">Check for updates</mdui-button>
+        <mdui-button id="btn-upd-apply" variant="filled" hidden loading></mdui-button>
+      </div>
+    </div>
   </div>
   <mdui-button slot="action" variant="filled" id="settings-done">Done</mdui-button>
 </mdui-dialog>

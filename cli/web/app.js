@@ -1,4 +1,4 @@
-/* Caddedit dashboard — vanilla JS + MDUI 2 web components. */
+/* Caddedit dashboard ??vanilla JS + MDUI 2 web components. */
 "use strict";
 
 const $ = (s) => document.querySelector(s);
@@ -68,7 +68,7 @@ function render() {
   $("#empty").hidden = visible.length > 0;
   $("#empty").textContent = routes.length === 0
     ? "No routes yet."
-    : `No routes match “${searchQuery}”.`;
+    : `No routes match ??{searchQuery}??`;
 
   for (const r of visible) {
     const card = document.createElement("div");
@@ -252,6 +252,76 @@ $("#set-theme").addEventListener("change", () => {
   if (sel) applyTheme(sel.value);
 });
 
+/* ---------- self-update ---------- */
+
+function setUpdText(html) {
+  $("#upd-status").innerHTML = html;
+}
+
+async function checkForUpdates(silent) {
+  if (!silent) setUpdText("checking??);
+  try {
+    const r = await api("/api/update/check");
+    document.querySelectorAll(".cur-version").forEach((el) => (el.textContent = r.current));
+    if (!r.supported) {
+      setUpdText(`v${r.current} ??auto-update unsupported here`);
+      return;
+    }
+    if (r.error) {
+      setUpdText(`v${r.current} ??check failed: ${r.error}`);
+      return;
+    }
+    if (r.up_to_date) {
+      setUpdText(`v${r.current} ??up to date`);
+      $("#btn-upd-apply").hidden = true;
+      return;
+    }
+    setUpdText(
+      `<b style="color:rgb(var(--mdui-color-primary))">v${r.latest} available</b> (installed: v${r.current})`
+    );
+    const btn = $("#btn-upd-apply");
+    btn.hidden = false;
+    btn.loading = false;
+    btn.textContent = `Update to v${r.latest}`;
+    btn.dataset.version = r.latest;
+  } catch (e) {
+    if (!silent) setUpdText(`check failed: ${e.message}`);
+  }
+}
+
+$("#btn-upd-check").addEventListener("click", () => checkForUpdates(false));
+
+$("#btn-upd-apply").addEventListener("click", async () => {
+  const btn = $("#btn-upd-apply");
+  const target = btn.dataset.version;
+  btn.loading = true;
+  setUpdText(`downloading and installing v${target}?�`);
+  try {
+    await api("/api/update", { method: "POST" });
+  } catch (e) {
+    btn.loading = false;
+    setUpdText(`update failed: ${e.message}`);
+    return;
+  }
+  setUpdText("installed ??restarting service??);
+  // the server is about to vanish; poll until it comes back on the new version
+  for (let i = 0; i < 30; i++) {
+    await new Promise((res) => setTimeout(res, 1500));
+    try {
+      const st = await fetch("/api/status", { credentials: "same-origin" });
+      if (!st.ok) continue;
+      const body = await st.json();
+      if (body.version === target.replace(/^v/, "")) {
+        toast(`updated to v${body.version}`);
+        location.reload();
+        return;
+      }
+    } catch (_) { /* still restarting */ }
+  }
+  btn.loading = false;
+  setUpdText("restart timed out ??check `systemctl status caddedit-dashboard`");
+});
+
 (function initSettings() {
   const sw = $("#swatches");
   for (const [name, hex] of ACCENTS) {
@@ -298,7 +368,7 @@ function parsedHtml(r) {
     rows.push(`<div class="parsed-row"><b>Directives</b>${r.details.map((d) => `· ${d}`).join("<br>")}</div>`);
   }
   if (r.kind === "raw") {
-    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser doesn't fully model — edit the raw source on the left.</div>`);
+    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser doesn't fully model ??edit the raw source on the left.</div>`);
   }
   return rows.join("");
 }
@@ -348,7 +418,7 @@ async function saveEditor() {
 async function removeRoute(r) {
   const ok = await mdui.confirm({
     headline: `Remove ${r.id}?`,
-    description: "The file moves to the backups folder — recoverable.",
+    description: "The file moves to the backups folder ??recoverable.",
     confirmText: "Remove",
     cancelText: "Keep",
   });
@@ -401,6 +471,7 @@ async function createRoute() {
 /* ---------- boot ---------- */
 
 (async () => {
+  checkForUpdates(true);
   const unlocked = await loadStatus().catch(() => false);
   if (unlocked) await loadAll();
 })();

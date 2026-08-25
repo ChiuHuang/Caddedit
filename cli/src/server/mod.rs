@@ -416,6 +416,96 @@ async fn reload_now(State(st): State<SharedState>) -> Response {
     }
 }
 
+/* ---------- self-update ---------- */
+
+#[derive(serde::Serialize)]
+struct UpdateCheck {
+    current: &'static str,
+    latest: Option<String>,
+    up_to_date: bool,
+    supported: bool,
+    error: Option<String>,
+}
+
+async fn update_check() -> Response {
+    let supported = crate::selfupdate::asset_name().is_some();
+    if !supported {
+        return Json(UpdateCheck {
+            current: env!("CARGO_PKG_VERSION"),
+            latest: None,
+            up_to_date: true,
+            supported: false,
+            error: Some("auto-update unsupported on this platform".into()),
+        })
+        .into_response();
+    }
+    let result = tokio::task::spawn_blocking(crate::selfupdate::latest_version).await;
+    match result.unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string()))) {
+        Ok(latest) => Json(UpdateCheck {
+            current: env!("CARGO_PKG_VERSION"),
+            up_to_date: !crate::selfupdate::is_newer(&latest, env!("CARGO_PKG_VERSION")),
+            latest: Some(latest),
+            supported: true,
+            error: None,
+        })
+        .into_response(),
+        Err(e) => Json(UpdateCheck {
+            current: env!("CARGO_PKG_VERSION"),
+            latest: None,
+            up_to_date: false,
+            supported: true,
+            error: Some(e.to_string()),
+        })
+        .into_response(),
+    }
+}
+
+async fn update_apply() -> Response {
+    let latest = match tokio::task::spawn_blocking(crate::selfupdate::latest_version)
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string())))
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return err(
+                StatusCode::BAD_GATEWAY,
+                format!("version check failed: {e}"),
+            )
+        }
+    };
+    if !crate::selfupdate::is_newer(&latest, env!("CARGO_PKG_VERSION")) {
+        return Json(json!({
+            "ok": true,
+            "updated": false,
+            "message": format!("already on v{}", env!("CARGO_PKG_VERSION"))
+        }))
+        .into_response();
+    }
+
+    // download + verify + install (bounded work, safe inside this request)
+    let install = tokio::task::spawn_blocking(move || crate::selfupdate::install_version(&latest))
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string())));
+    let message = match install {
+        Ok(m) => m,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, e.to_string()),
+    };
+
+    // hand the restart to a transient unit so it survives our own shutdown
+    let restart_scheduled = tokio::task::spawn_blocking(crate::selfupdate::schedule_restart)
+        .await
+        .unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string())))
+        .is_ok();
+
+    Json(json!({
+        "ok": true,
+        "updated": true,
+        "restarting": restart_scheduled,
+        "message": message,
+    }))
+    .into_response()
+}
+
 /* ---------- wiring ---------- */
 
 pub async fn run(host: &str, port: u16, paths: Paths) -> anyhow::Result<()> {
@@ -438,6 +528,8 @@ pub async fn run(host: &str, port: u16, paths: Paths) -> anyhow::Result<()> {
         .route("/api/vhosts/{id}/toggle", post(toggle_vhost))
         .route("/api/vhosts/{id}", axum::routing::delete(delete_vhost))
         .route("/api/reload", post(reload_now))
+        .route("/api/update/check", get(update_check))
+        .route("/api/update", post(update_apply))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth_mw))
         .with_state(state);
 
