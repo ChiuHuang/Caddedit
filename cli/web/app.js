@@ -242,7 +242,10 @@ function applyAccent(hex) {
   });
 }
 
-$("#btn-settings").addEventListener("click", () => ($("#dlg-settings").open = true));
+$("#btn-settings").addEventListener("click", () => {
+  renderPluginSettingsCards();
+  $("#dlg-settings").open = true;
+});
 $("#settings-done").addEventListener("click", () => ($("#dlg-settings").open = false));
 
 $("#set-theme").addEventListener("change", () => {
@@ -944,6 +947,28 @@ function renderPluginSettings() {
     row.append(sw, url, del);
     wrap.append(row);
   });
+}
+
+function renderPluginSettingsCards() {
+  const wrap = $("#settings-plugin-cards");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  for (const def of pluginRegistry) {
+    if (typeof def.renderSettings !== "function") continue;
+    const card = document.createElement("div");
+    const title = document.createElement("div");
+    title.style.fontWeight = "500";
+    title.style.marginBottom = ".5rem";
+    title.textContent = def.name || def.id;
+    const body = document.createElement("div");
+    card.append(title, body);
+    try {
+      def.renderSettings(body, window.caddedit);
+    } catch (e) {
+      body.textContent = `plugin settings error: ${e.message}`;
+    }
+    wrap.append(card);
+  }
 }
 
 $("#btn-plugins").addEventListener("click", () => {
