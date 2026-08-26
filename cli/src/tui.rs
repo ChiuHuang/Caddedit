@@ -197,7 +197,7 @@ impl App {
         let turning_on = vf.status == vhost::Status::Off;
 
         if turning_on && caddy::caddy_available() {
-            if let Err(e) = caddy::validate_file(&vf.path) {
+            if let Err(e) = caddy::validate_site(&self.paths, &vf.path) {
                 self.set_msg(format!("validation failed:\n{e}"), true);
                 return Ok(());
             }
@@ -227,7 +227,7 @@ impl App {
         execute!(stdout(), LeaveAlternateScreen)?;
         let outcome = caddy::open_editor(&vf.path).and_then(|_| {
             if caddy::caddy_available() {
-                caddy::validate_file(&vf.path).map(|_| ())
+                caddy::validate_site(&self.paths, &vf.path).map(|_| ())
             } else {
                 Ok(())
             }

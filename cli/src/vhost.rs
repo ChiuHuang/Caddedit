@@ -228,7 +228,7 @@ pub fn create_vhost_source(paths: &Paths, source: &str) -> Result<PathBuf> {
     }
     fsutil::atomic_write(&target, &text)?;
     if crate::caddy::caddy_available() {
-        if let Err(e) = crate::caddy::validate_file(&target) {
+        if let Err(e) = crate::caddy::validate_site(paths, &target) {
             let _ = fs::remove_file(&target);
             anyhow::bail!("validation failed:\n{e}");
         }
@@ -255,7 +255,7 @@ pub fn create_vhost_file(
     let block = scaffold_block(domains, upstream, tls, watch_log);
     fsutil::atomic_write(&target, &block)?;
     if crate::caddy::caddy_available() {
-        if let Err(e) = crate::caddy::validate_file(&target) {
+        if let Err(e) = crate::caddy::validate_site(paths, &target) {
             let _ = fs::remove_file(&target);
             anyhow::bail!("validation failed:\n{e}");
         }

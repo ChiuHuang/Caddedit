@@ -13,7 +13,7 @@ pub fn run(paths: &Paths, domain: Option<&str>, no_reload: bool) -> Result<()> {
     caddy::open_editor(&vf.path)?;
 
     if caddy::caddy_available() {
-        match caddy::validate_file(&vf.path) {
+        match caddy::validate_site(paths, &vf.path) {
             Ok(_) => println!("{}", "validated".green()),
             Err(e) => {
                 eprintln!("{}", "validation failed — fix or revert:".red().bold());

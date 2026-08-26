@@ -225,11 +225,11 @@ async fn get_raw(State(st): State<SharedState>, Path(id): Path<String>) -> Respo
 }
 
 /// Validate one site-block file; returns Err(message) on failure.
-fn validate_block(path: &std::path::Path) -> Result<(), String> {
+fn validate_block(paths: &Paths, path: &std::path::Path) -> Result<(), String> {
     if !caddy::caddy_available() {
         return Ok(());
     }
-    caddy::validate_file(path)
+    caddy::validate_site(paths, path)
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
@@ -249,7 +249,7 @@ async fn put_raw(
         }
         let old = vhost::read_raw(&vf).map_err(|e| e.to_string())?;
         fsutil::atomic_write(&vf.path, &content).map_err(|e| e.to_string())?;
-        if let Err(e) = validate_block(&vf.path) {
+        if let Err(e) = validate_block(&paths, &vf.path) {
             let _ = fsutil::atomic_write(&vf.path, &old);
             return Err(format!("validation failed, reverted:\n{e}"));
         }
@@ -294,7 +294,7 @@ async fn toggle_vhost(
             .ok_or_else(|| format!("no vhost named `{id}`"))?;
         let turning_on = vf.status == vhost::Status::Off;
         if turning_on {
-            validate_block(&vf.path).map_err(|e| format!("validation failed:\n{e}"))?;
+            validate_block(&paths, &vf.path).map_err(|e| format!("validation failed:\n{e}"))?;
         }
         vhost::set_status(&vf, &paths, turning_on).map_err(|e| e.to_string())?;
         Ok((turning_on,))

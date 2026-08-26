@@ -29,7 +29,7 @@ pub fn run(paths: &Paths) -> Result<bool> {
             continue;
         }
         print!("{} {} ... ", "●".green(), vf.id.bright_white());
-        match caddy::validate_file(&vf.path) {
+        match caddy::validate_site(paths, &vf.path) {
             Ok(_) => println!("{}", "ok".green()),
             Err(e) => {
                 ok = false;

@@ -38,7 +38,7 @@ fn flip(paths: &Paths, domains: &[String], on: bool, no_reload: bool) -> Result<
         }
         // sanity-validate the block before it goes live
         if on && caddy::caddy_available() {
-            if let Err(e) = caddy::validate_file(&vf.path) {
+            if let Err(e) = caddy::validate_site(paths, &vf.path) {
                 eprintln!("{}", format!("✗ {}: validation failed", vf.id).red().bold());
                 eprintln!("{}", format!("{e:#}").red());
                 continue;

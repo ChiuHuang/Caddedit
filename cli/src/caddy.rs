@@ -2,6 +2,7 @@
 
 use crate::config::Paths;
 use anyhow::{anyhow, Context, Result};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -36,6 +37,51 @@ pub fn validate_file(path: &Path) -> Result<String> {
         &path.to_string_lossy(),
     ])
     .map_err(|e| anyhow!(e))
+}
+
+/// Extract snippet definitions from the main Caddyfile, so that validating a
+/// lone site block can resolve `import <snippet>` lines.
+fn snippet_prelude(paths: &Paths) -> Option<String> {
+    let src = fs::read_to_string(&paths.caddyfile).ok()?;
+    let doc = crate::caddyfile::parser::Document::parse(&src);
+    let parts: Vec<&str> = doc
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            crate::caddyfile::parser::TopLevel::Snippet(s) => Some(&doc.src[s.full_span.clone()]),
+            _ => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+/// Validate a single site-block file. Snippets from the main Caddyfile are
+/// prepended when the block imports one, since `caddy validate` on a lone
+/// file cannot resolve those imports on its own.
+pub fn validate_site(paths: &Paths, path: &Path) -> Result<String> {
+    match validate_file(path) {
+        Ok(out) => Ok(out),
+        Err(standalone_err) => {
+            let Some(prelude) = snippet_prelude(paths) else {
+                return Err(standalone_err);
+            };
+            let body =
+                fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+            let tmp = std::env::temp_dir().join(format!(
+                "caddedit-validate-{}.caddy",
+                crate::fsutil::random_token()
+            ));
+            fs::write(&tmp, format!("{prelude}\n\n{body}"))
+                .with_context(|| format!("writing {}", tmp.display()))?;
+            let result = validate_file(&tmp);
+            let _ = fs::remove_file(&tmp);
+            result
+        }
+    }
 }
 
 pub fn caddy_available() -> bool {
