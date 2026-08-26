@@ -7,6 +7,18 @@
 <link rel="stylesheet" href="/vendor/mdui/mdui.css">
 <style>
   :root { color-scheme: dark light; }
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--mdui-color-outline-variant)) transparent;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgb(var(--mdui-color-outline-variant));
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--mdui-color-outline)); }
+  ::-webkit-scrollbar-corner { background: transparent; }
   body { margin: 0; background: rgb(var(--mdui-color-background)); }
   main { max-width: 60rem; margin: 0 auto; padding: 1rem 1rem 6rem; }
   .mono { font-family: Consolas, "Cascadia Mono", monospace; }

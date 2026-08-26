@@ -102,4 +102,5 @@ presets, dark/light theme. Works offline.
 The `vhosts/` layout is identical — install the new binary, run `caddedit ls`
 to confirm it sees your routes, then stop the old service. Full steps:
 [`cli/README.md`](cli/README.md#migrating-from-the-legacy-python-webui).
-The FastAPI code (`manager.py`) stays in this repo for reference only.
+The legacy FastAPI code was removed; it lives on in git history if you ever
+need it.
