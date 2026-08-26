@@ -128,13 +128,18 @@ fn yes() -> bool {
 
 #[derive(Deserialize)]
 struct CreateReq {
-    domains: String,
+    #[serde(default)]
+    domains: Option<String>,
     #[serde(default)]
     upstream: String,
     #[serde(default = "default_tls")]
     tls: String,
     #[serde(default)]
     watch_log: bool,
+    /// When present, the request creates the route from a raw site block
+    /// instead of the structured fields (dashboard "Raw" create tab).
+    #[serde(default)]
+    source: Option<String>,
 }
 fn default_tls() -> String {
     "internal".into()
@@ -359,51 +364,60 @@ async fn delete_vhost(
 }
 
 async fn create_vhost(State(st): State<SharedState>, Json(req): Json<CreateReq>) -> Response {
-    let domains: Vec<String> = req
-        .domains
-        .split([',', ' ', ';'])
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect();
-    if domains.is_empty() {
-        return err(StatusCode::BAD_REQUEST, "at least one domain is required");
-    }
-
     let paths = st.paths.clone();
-    let upstream = req.upstream.trim().to_string();
-    let tls = req.tls.clone();
-    let watch_log = req.watch_log;
-    let result = tokio::task::spawn_blocking(move || {
-        vhost::create_vhost_file(&paths, &domains, &upstream, &tls, watch_log)
-    })
-    .await;
-
-    match result {
-        Ok(Ok(target)) => {
-            let mut reloaded = false;
-            let mut reload_error = None;
-            let paths = st.paths.clone();
-            match tokio::task::spawn_blocking(move || caddy::reload(&paths)).await {
-                Ok(Ok(_)) => reloaded = true,
-                Ok(Err(e)) => reload_error = Some(e.to_string()),
-                Err(e) => reload_error = Some(e.to_string()),
-            }
-            (
-                StatusCode::CREATED,
-                Json(json!({
-                    "ok": true,
-                    "id": target.file_stem().unwrap_or_default().to_string_lossy(),
-                    "file": target.display().to_string(),
-                    "reloaded": reloaded,
-                    "reload_error": reload_error,
-                })),
-            )
-                .into_response()
+    let result = if req.source.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+        let source = req.source.unwrap_or_default();
+        tokio::task::spawn_blocking(move || {
+            vhost::create_vhost_source(&paths, &source).map_err(|e| e.to_string())
+        })
+        .await
+    } else {
+        let domains: Vec<String> = req
+            .domains
+            .unwrap_or_default()
+            .split([',', ' ', ';'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        if domains.is_empty() {
+            return err(StatusCode::BAD_REQUEST, "at least one domain is required");
         }
-        Ok(Err(e)) => err(StatusCode::BAD_REQUEST, e.to_string()),
-        Err(e) => err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+        let upstream = req.upstream.trim().to_string();
+        let tls = req.tls.clone();
+        let watch_log = req.watch_log;
+        tokio::task::spawn_blocking(move || {
+            vhost::create_vhost_file(&paths, &domains, &upstream, &tls, watch_log)
+                .map_err(|e| e.to_string())
+        })
+        .await
+    };
+
+    let target = match result {
+        Ok(Ok(target)) => target,
+        Ok(Err(e)) => return err(StatusCode::BAD_REQUEST, e),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+
+    let mut reloaded = false;
+    let mut reload_error = None;
+    let paths = st.paths.clone();
+    match tokio::task::spawn_blocking(move || caddy::reload(&paths)).await {
+        Ok(Ok(_)) => reloaded = true,
+        Ok(Err(e)) => reload_error = Some(e.to_string()),
+        Err(e) => reload_error = Some(e.to_string()),
     }
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "ok": true,
+            "id": target.file_stem().unwrap_or_default().to_string_lossy(),
+            "file": target.display().to_string(),
+            "reloaded": reloaded,
+            "reload_error": reload_error,
+        })),
+    )
+        .into_response()
 }
 
 async fn reload_now(State(st): State<SharedState>) -> Response {

@@ -2,7 +2,7 @@
 
 # Caddedit
 
-**Split, inspect and toggle Caddy site blocks ??without pain.**
+**Split, inspect and toggle Caddy site blocks — without pain.**
 
 One static binary. No Python. No daemon. Your Caddyfile stays the source of truth.
 
@@ -22,11 +22,11 @@ curl -sSL https://raw.githubusercontent.com/ChiuHuang/Caddedit/main/install.sh |
 ```console
 $ caddedit ls
       DOMAINS                                   TYPE    UPSTREAM                        TLS
-??on   app.example.com                           proxy   localhost:3000                  -
-??on   grafana.example.com, metrics.example.com  proxy   localhost:3333, localhost:3334  internal
-??off  legacy.example.net:8443                   static  -                               acme email
-??on   www.example.net                           static  -                               dns: cloudflare
-??on   edge.example.io                           raw     h2c://backend:9000              -
+● on   app.example.com                           proxy   localhost:3000                  -
+● on   grafana.example.com, metrics.example.com  proxy   localhost:3333, localhost:3334  internal
+○ off  legacy.example.net:8443                   static  -                               acme email (me@example.com)
+● on   www.example.net                           static  -                               dns challenge (cloudflare)
+● on   edge.example.io                           raw     h2c://backend:9000              -
 ```
 
 ## Why
@@ -35,11 +35,11 @@ A monolithic `Caddyfile` turns into a dumping ground; web panels turn your
 config into form fields that fight real syntax. **Caddedit takes neither side:**
 
 - keeps one file per site under `vhosts/enabled/` and `vhosts/disabled/`,
-  moved around **byte-for-byte** ??tabs, comments and heredocs stay untouched
+  moved around **byte-for-byte** — tabs, comments and heredocs stay untouched
 - anything it can't fully understand is shown honestly as `raw`, never mangled
 - every mutation runs `caddy validate` *before* it can go live, and rolls back
   automatically when validation or reload fails
-- single static musl binary ??`scp` it to any server and run
+- single static musl binary — `scp` it to any server and run
 
 ## Commands
 
@@ -47,10 +47,10 @@ config into form fields that fight real syntax. **Caddedit takes neither side:**
 | --- | --- | --- |
 | `caddedit init` | split a monolithic Caddyfile | `--force` re-splits |
 | `caddedit ls --json` | all routes at a glance | scriptable output |
-| `caddedit show [domain]` | print one site block | bare ??interactive picker |
+| `caddedit show [domain]` | print one site block | bare → interactive picker |
 | `caddedit new app.com` | scaffold a route | wizard or flags |
 | `caddedit on / off <domain>...` | park & restore routes | validated + reload |
-| `caddedit rm [domain]` | soft-delete ??backups/ | never hard-deletes |
+| `caddedit rm [domain]` | soft-delete → backups/ | never hard-deletes |
 | `caddedit edit [domain]` | `$EDITOR`, checked on exit | |
 | `caddedit check` | validate everything | exit code for cron |
 | `caddedit reload` | reload caddy | honors custom command |
@@ -68,8 +68,8 @@ Run **bare `caddedit`** for an interactive TUI browser:
 
 ```
 /etc/caddy/Caddyfile          global options + snippets + import line
-/etc/caddy/vhosts/enabled/    live site blocks        ??one file per route
-/etc/caddy/vhosts/disabled/   parked routes           ??toggling just moves files
+/etc/caddy/vhosts/enabled/    live site blocks        — one file per route
+/etc/caddy/vhosts/disabled/   parked routes           — toggling just moves files
 /etc/caddy/backups/           timestamped backups + soft-deleted routes
 ```
 
@@ -79,7 +79,7 @@ Run **bare `caddedit`** for an interactive TUI browser:
 CADDEDIT_PASSWORD=secret caddedit serve --host 127.0.0.1 --port 29048
 ```
 
-Material Design 3 interface compiled into the binary ??route list with
+Material Design 3 interface compiled into the binary — route list with
 toggles, raw editor with inline validation errors, route creation with TLS
 presets, dark/light theme. Works offline.
 
@@ -92,14 +92,14 @@ presets, dark/light theme. Works offline.
 | `VHOSTS_DIR` | `<config parent>/vhosts` | enabled/disabled root |
 | `CADDY_BACKUP_DIR` | `<config parent>/backups` | backups |
 | `CADDY_BIN` | `caddy` | binary for validate/reload |
-| `CADDEDIT_RELOAD_COMMAND` | `caddy reload --config ?�` | custom reload |
+| `CADDEDIT_RELOAD_COMMAND` | `caddy reload --config <path>` | custom reload |
 | `CADDEDIT_PASSWORD` | *(unset = open)* | dashboard password |
 
 </details>
 
 ## Migrating from the legacy Python webui?
 
-The `vhosts/` layout is identical ??install the new binary, run `caddedit ls`
+The `vhosts/` layout is identical — install the new binary, run `caddedit ls`
 to confirm it sees your routes, then stop the old service. Full steps:
 [`cli/README.md`](cli/README.md#migrating-from-the-legacy-python-webui).
 The FastAPI code (`manager.py`) stays in this repo for reference only.

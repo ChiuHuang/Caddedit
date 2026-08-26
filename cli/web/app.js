@@ -290,39 +290,326 @@ function parsedHtml(r) {
     rows.push(`<div class="parsed-row"><b>Directives</b>${r.details.map((d) => `· ${d}`).join("<br>")}</div>`);
   }
   if (r.kind === "raw") {
-    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser does not fully model — edit the raw source on the left.</div>`);
+    rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser does not fully model — prefer the Raw tab for edits.</div>`);
   }
   return rows.join("");
+}
+
+/* ---------- parsed editor: client-side site-block model ---------- */
+
+let editModel = null;
+
+function stripComments(line) {
+  let inQuote = false, esc = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === '"') { inQuote = !inQuote; continue; }
+    if (ch === "#" && !inQuote) return line.slice(0, i);
+  }
+  return line;
+}
+
+function braceDelta(line) {
+  const s = stripComments(line).replace(/"(?:\\.|[^"\\])*"/g, '""');
+  let d = 0;
+  for (const ch of s) {
+    if (ch === "{") d++;
+    else if (ch === "}") d--;
+  }
+  return d;
+}
+
+/// Locate header / watch_log / tls / simple reverse_proxy / everything else
+/// ("other" ranges are preserved byte-for-byte on rebuild).
+function parseSiteBlock(text) {
+  const lines = text.split("\n");
+  const p = {
+    lines,
+    headerIdx: -1, headerIndent: "", headerText: "", addrs: [],
+    watchIdx: null, tls: null, rp: null,
+    otherRanges: [],
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    if (!t || t.startsWith("#")) { i++; continue; }
+    break;
+  }
+  if (i >= lines.length) return p;
+  p.headerIdx = i;
+  p.headerIndent = (lines[i].match(/^\s*/) || [""])[0];
+  let h = lines[i].trim();
+  if (h.endsWith("{")) h = h.slice(0, -1).trim();
+  p.headerText = h;
+  p.addrs = h.split(/[,\s]+/).filter(Boolean);
+
+  const consumeBlock = (start) => {
+    let d = braceDelta(lines[start]), j = start;
+    while (d > 0 && j + 1 < lines.length) { j++; d += braceDelta(lines[j]); }
+    return j;
+  };
+
+  let depth = 1;
+  i++;
+  let cur = null;
+  const flush = () => { if (cur) { p.otherRanges.push(cur); cur = null; } };
+  while (i < lines.length) {
+    const t = lines[i].trim();
+    const delta = braceDelta(lines[i]);
+    if (depth === 1) {
+      const m = t.match(/^(\S+)\s*(.*)$/);
+      const kw = m ? m[1] : "";
+      const rest = m ? m[2] : "";
+      if (!t || t.startsWith("#")) {
+        if (cur) cur.end = i; else cur = { start: i, end: i };
+      } else if (kw === "import" && rest === "request_watch_log") {
+        flush();
+        p.watchIdx = i;
+      } else if (kw === "tls" && delta > 0) {
+        flush();
+        const end = consumeBlock(i);
+        p.tls = { start: i, end, block: true, args: "", raw: lines.slice(i, end + 1).join("\n") };
+        i = end;
+      } else if (kw === "tls") {
+        flush();
+        p.tls = { start: i, end: i, block: false, args: rest, raw: lines[i] };
+      } else if (kw === "reverse_proxy" && delta <= 0 && rest && !rest.includes("{")) {
+        flush();
+        p.rp = { start: i, target: rest };
+      } else if (delta > 0) {
+        flush();
+        const end = consumeBlock(i);
+        p.otherRanges.push({ start: i, end });
+        i = end;
+      } else {
+        flush();
+        p.otherRanges.push({ start: i, end: i });
+      }
+    }
+    depth += delta;
+    if (depth <= 0) { flush(); break; }
+    i++;
+  }
+  flush();
+  return p;
+}
+
+function currentParsedState() {
+  return {
+    addrs: $("#pe-domains").value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+    upstream: $("#pe-upstream").value.trim(),
+    mode: $("#pe-tls").value,
+    detail: $("#pe-tls-detail").value.trim(),
+    raw: $("#pe-tls-raw").value,
+    watch: $("#pe-watch-log").checked,
+  };
+}
+
+function updateTlsFields() {
+  const m = $("#pe-tls").value;
+  $("#pe-tls-detail-wrap").hidden = !(m === "acme" || m === "manual");
+  $("#pe-tls-detail").label = m === "manual" ? "Certificate and key paths" : "ACME email";
+  $("#pe-tls-raw-wrap").hidden = !(m === "cloudflare" || m === "custom");
+  if (m === "cloudflare" && !$("#pe-tls-raw").value.trim()) {
+    $("#pe-tls-raw").value = "tls {\n\tdns cloudflare {$CF_API_TOKEN}\n}";
+  }
+}
+
+/// Replacement lines for the tls section under the current GUI state.
+/// null = keep whatever is there now; [] = remove it.
+function tlsReplacement(st) {
+  switch (st.mode) {
+    case "none": return [];
+    case "internal": return ["\ttls internal"];
+    case "acme":
+    case "manual":
+      return st.detail ? ["\ttls " + st.detail] : null;
+    case "cloudflare":
+    case "custom": {
+      const raw = st.raw.replace(/\s+$/, "");
+      if (!raw.trim()) return null;
+      return raw.split("\n").map((l) => (/^\s/.test(l) ? l : "\t" + l));
+    }
+    default: return null;
+  }
+}
+
+/// Surgical rebuild: only lines touched through the GUI change; everything
+/// else (comments, blank lines, complex blocks) stays byte-for-byte.
+function buildParsedSource() {
+  const p = editModel.p;
+  const st = currentParsedState();
+  const init = editModel.initial;
+  const tlsTouched =
+    st.mode !== init.mode || st.detail !== init.detail || st.raw.trim() !== init.raw.trim();
+
+  const inserts = [];
+  if (st.watch && p.watchIdx == null) inserts.push("\timport request_watch_log");
+  if (st.upstream && !p.rp) inserts.push("\treverse_proxy " + st.upstream);
+  if (!p.tls) {
+    const rep = tlsReplacement(st);
+    if (rep && rep.length) inserts.push(...rep);
+  }
+
+  const out = [];
+  for (let i = 0; i < p.lines.length; i++) {
+    if (i === p.headerIdx) {
+      const header = p.headerIndent + st.addrs.join(", ") + " {";
+      out.push(header === p.lines[i] ? p.lines[i] : header);
+      out.push(...inserts.splice(0));
+      continue;
+    }
+    if (p.watchIdx === i) {
+      if (st.watch) out.push(p.lines[i]);
+      continue;
+    }
+    if (p.rp && p.rp.start === i) {
+      if (st.upstream) {
+        const ind = (p.lines[i].match(/^\s*/) || [""])[0];
+        out.push(st.upstream === p.rp.target ? p.lines[i] : ind + "reverse_proxy " + st.upstream);
+      }
+      continue;
+    }
+    if (p.tls && i >= p.tls.start && i <= p.tls.end) {
+      if (i === p.tls.end) {
+        if (st.mode === "none") {
+          /* dropped */
+        } else if (!tlsTouched) {
+          out.push(p.lines.slice(p.tls.start, p.tls.end + 1).join("\n"));
+        } else {
+          const rep = tlsReplacement(st);
+          if (rep) out.push(rep.join("\n"));
+          else out.push(p.lines.slice(p.tls.start, p.tls.end + 1).join("\n"));
+        }
+      }
+      continue;
+    }
+    out.push(p.lines[i]);
+  }
+  return out.join("\n");
+}
+
+function parsedDirty() {
+  if (!editModel || !editModel.initial) return false;
+  const st = currentParsedState();
+  const i = editModel.initial;
+  return (
+    st.addrs.join(", ") !== i.domains ||
+    st.upstream !== i.upstream ||
+    st.mode !== i.mode ||
+    st.detail !== i.detail ||
+    st.raw.trim() !== i.raw.trim() ||
+    st.watch !== i.watch
+  );
+}
+
+function hydrateParsedEditor(r, raw) {
+  const p = parseSiteBlock(raw);
+  editModel = { raw, p, initial: null };
+  $("#parsed-summary").innerHTML = parsedHtml(r);
+
+  const upstream = p.rp ? p.rp.target : "";
+  $("#pe-domains").value = p.addrs.join(", ");
+  $("#pe-upstream").value = upstream;
+
+  let mode = "none", detail = "", tlsRaw = "";
+  if (p.tls && !p.tls.block) {
+    const args = p.tls.args.trim();
+    if (args === "internal") mode = "internal";
+    else if (/^\S+@\S+$/.test(args)) { mode = "acme"; detail = args; }
+    else if (/\s/.test(args)) { mode = "manual"; detail = args; }
+    else { mode = "custom"; tlsRaw = args; }
+  } else if (p.tls) {
+    tlsRaw = p.tls.raw;
+    mode = /dns\s+cloudflare\b/.test(tlsRaw) ? "cloudflare" : "custom";
+  }
+  $("#pe-tls").value = mode;
+  $("#pe-tls-detail").value = detail;
+  $("#pe-tls-raw").value = tlsRaw;
+  $("#pe-watch-log").checked = p.watchIdx != null;
+  updateTlsFields();
+
+  const other = p.otherRanges
+    .map((rg) => p.lines.slice(rg.start, rg.end + 1).join("\n"))
+    .join("\n");
+  $("#pe-other-wrap").hidden = !other;
+  $("#pe-other").textContent = other.length > 2000 ? other.slice(0, 2000) + "\n…" : other;
+
+  const notes = [];
+  if (p.headerIdx < 0) notes.push("No site block header found — use the Raw tab.");
+  if (r.kind === "proxy" && !p.rp && r.upstreams.length)
+    notes.push(
+      "Complex reverse_proxy block(s) are preserved verbatim; the upstream field only controls a simple `reverse_proxy <target>` line."
+    );
+  if (r.kind === "raw")
+    notes.push("The structured parser can't fully model this route — prefer the Raw tab.");
+  $("#pe-note").textContent = notes.join(" ");
+
+  editModel.initial = {
+    domains: p.addrs.join(", "),
+    upstream,
+    mode, detail, raw: tlsRaw,
+    watch: p.watchIdx != null,
+  };
+}
+
+function setEditTab(v) {
+  $("#edit-parsed-pane").hidden = v !== "parsed";
+  $("#edit-raw-pane").hidden = v !== "raw";
 }
 
 async function openEditor(r) {
   editingId = r.id;
   $("#edit-id").textContent = r.id;
   $("#edit-error").textContent = "";
-  $("#parsed-body").innerHTML = parsedHtml(r);
+  $("#edit-tabs").value = "parsed";
+  setEditTab("parsed");
   const field = $("#edit-content");
   field.loading = true;
   $("#dlg-edit").open = true;
+  let raw;
   try {
     const data = await api(`/api/vhosts/${encodeURIComponent(r.id)}/raw`);
-    field.value = data.content;
+    raw = data.content;
   } catch (e) {
     $("#dlg-edit").open = false;
     toast(e.message, { action: "dismiss" });
     return;
   }
   field.loading = false;
+  field.value = raw;
+  hydrateParsedEditor(r, raw);
 }
 
 $("#edit-cancel").addEventListener("click", () => ($("#dlg-edit").open = false));
 $("#edit-save").addEventListener("click", saveEditor);
+
+$("#edit-tabs").addEventListener("change", () => {
+  const v = $("#edit-tabs").value;
+  if (v === "raw" && parsedDirty()) $("#edit-content").value = buildParsedSource();
+  setEditTab(v);
+});
+
+$("#pe-tls").addEventListener("change", updateTlsFields);
+
 async function saveEditor() {
   const btn = $("#edit-save");
+  let content = $("#edit-content").value;
+  if ($("#edit-tabs").value === "parsed") {
+    if (!currentParsedState().addrs.length) {
+      $("#edit-error").textContent = "at least one domain is required";
+      return;
+    }
+    content = buildParsedSource();
+    $("#edit-content").value = content;
+  }
   btn.loading = true;
   try {
     await api(`/api/vhosts/${encodeURIComponent(editingId)}/raw`, {
       method: "PUT",
-      body: JSON.stringify({ content: $("#edit-content").value, reload: true }),
+      body: JSON.stringify({ content, reload: true }),
     });
     $("#edit-error").textContent = "";
     $("#dlg-edit").open = false;
@@ -356,22 +643,41 @@ async function removeRoute(r) {
 /* ---------- create ---------- */
 
 $("#fab-new").addEventListener("click", () => {
+  $("#new-tabs").value = "parsed";
+  $("#new-parsed-pane").hidden = false;
+  $("#new-raw-pane").hidden = true;
   $("#new-domains").value = "";
   $("#new-upstream").value = "";
   $("#new-tls").value = "internal";
   $("#new-watch-log").checked = false;
+  $("#new-raw").value = "";
   $("#new-error").textContent = "";
   $("#dlg-new").open = true;
 });
 $("#new-cancel").addEventListener("click", () => ($("#dlg-new").open = false));
+$("#new-tabs").addEventListener("change", () => {
+  const v = $("#new-tabs").value;
+  $("#new-parsed-pane").hidden = v !== "parsed";
+  $("#new-raw-pane").hidden = v !== "raw";
+});
 $("#new-create").addEventListener("click", createRoute);
 async function createRoute() {
-  const payload = {
-    domains: $("#new-domains").value,
-    upstream: $("#new-upstream").value.trim(),
-    tls: $("#new-tls").value,
-    watch_log: $("#new-watch-log").checked,
-  };
+  let payload;
+  if ($("#new-tabs").value === "raw") {
+    const source = $("#new-raw").value;
+    if (!source.trim()) {
+      $("#new-error").textContent = "site block source is required";
+      return;
+    }
+    payload = { source };
+  } else {
+    payload = {
+      domains: $("#new-domains").value,
+      upstream: $("#new-upstream").value.trim(),
+      tls: $("#new-tls").value,
+      watch_log: $("#new-watch-log").checked,
+    };
+  }
   try {
     await api("/api/vhosts", { method: "POST", body: JSON.stringify(payload) });
     $("#dlg-new").open = false;

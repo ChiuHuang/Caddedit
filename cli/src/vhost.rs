@@ -203,6 +203,39 @@ pub fn scaffold_block(domains: &[String], upstream: &str, tls: &str, watch_log: 
     s
 }
 
+/// Write a raw site block into enabled/, validating before it sticks.
+/// Used by the dashboard's "Raw" create tab.
+pub fn create_vhost_source(paths: &Paths, source: &str) -> Result<PathBuf> {
+    let doc = crate::caddyfile::parser::Document::parse(source);
+    let sites = doc.sites();
+    if sites.len() != 1 {
+        anyhow::bail!("content must contain exactly one site block");
+    }
+    let stem = sites[0]
+        .primary_address()
+        .map(sanitize_address)
+        .unwrap_or_else(|| "site".to_string());
+    std::fs::create_dir_all(paths.enabled_dir())?;
+    let mut target = paths.enabled_dir().join(format!("{stem}.caddy"));
+    let mut n = 2;
+    while target.exists() {
+        target = paths.enabled_dir().join(format!("{stem}-{n}.caddy"));
+        n += 1;
+    }
+    let mut text = source.to_string();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    fsutil::atomic_write(&target, &text)?;
+    if crate::caddy::caddy_available() {
+        if let Err(e) = crate::caddy::validate_file(&target) {
+            let _ = fs::remove_file(&target);
+            anyhow::bail!("validation failed:\n{e}");
+        }
+    }
+    Ok(target)
+}
+
 /// Write a new vhost file into enabled/, validating before it sticks.
 pub fn create_vhost_file(
     paths: &Paths,
