@@ -61,12 +61,14 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 
 const INSTALL_SCRIPT: &str = r#"set -eu
 dir="$(mktemp -d)"
+cd "$dir"
 base="https://github.com/{repo}/releases/download/v{ver}"
 asset="caddedit-{target}"
 curl -fsSL --max-time 120 "$base/$asset.tar.gz" -O
-expected="$(curl -fsSL --max-time 30 "$base/$asset.tar.gz.sha256" | awk '{print $1}')"
+expected="$(curl -fsSL --max-time 30 --retry 3 "$base/$asset.tar.gz.sha256" | awk '{print $1}')"
 actual="$(sha256sum "$asset.tar.gz" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$asset.tar.gz" | awk '{print $1}')"
-[ -n "$expected" ] && [ "$expected" = "$actual" ] || {{ echo "checksum mismatch"; exit 1; }}
+[ -n "$expected" ] || { echo "empty checksum (download of .sha256 failed)"; exit 1; }
+[ "$expected" = "$actual" ] || { echo "checksum mismatch"; exit 1; }
 tar xzf "$asset.tar.gz"
 install -m 0755 "$asset/caddedit" /usr/local/bin/caddedit
 echo "installed $(/usr/local/bin/caddedit --version)"
@@ -86,9 +88,19 @@ pub fn install_version(version: &str) -> Result<String> {
         .output()
         .map_err(|e| anyhow!("cannot run sh: {e}"))?;
     if !out.status.success() {
+        // failure details may land on either stream (e.g. `echo`-based errors)
+        let detail = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
         return Err(anyhow!(
             "update script failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
+            if detail.is_empty() {
+                "unknown error".to_string()
+            } else {
+                detail
+            }
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
