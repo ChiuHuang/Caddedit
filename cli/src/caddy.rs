@@ -69,8 +69,8 @@ fn adapt_file(path: &Path) -> Result<String> {
         "caddyfile",
         "--config",
         &path.to_string_lossy(),
-        "--quiet",
     ])
+    .map(|_| String::new())
     .map_err(|e| anyhow!(e))
 }
 
