@@ -36,6 +36,17 @@
     font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere;
     max-height: 10rem; overflow: auto;
   }
+  .dir-row { display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.5rem; }
+  .dir-row mdui-select { width: 12rem; flex-shrink: 0; }
+  .dir-row mdui-text-field { flex: 1; }
+  .dir-row mdui-button-icon { flex-shrink: 0; margin-top: 0.25rem; }
+  .plugin-card {
+    background: rgb(var(--mdui-color-surface-container));
+    border-radius: var(--mdui-shape-corner-medium);
+    padding: 1rem;
+  }
+  .plugin-entry { display: flex; align-items: center; gap: 0.75rem; }
+  .plugin-entry .url { flex: 1; font-size: 0.8rem; overflow-wrap: anywhere; }
   .parsed-row { margin-bottom: 0.65rem; font-size: 0.85rem; line-height: 1.45; }
   .parsed-row b { display: block; opacity: 0.6; font-weight: 500; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
   .chip {
@@ -66,6 +77,9 @@
     </mdui-tooltip>
     <mdui-tooltip content="Settings">
       <mdui-button-icon id="btn-settings"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg></mdui-button-icon>
+    </mdui-tooltip>
+    <mdui-tooltip content="Plugins">
+      <mdui-button-icon id="btn-plugins"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V19c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V21H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg></mdui-button-icon>
     </mdui-tooltip>
     <mdui-tooltip content="Logout">
       <mdui-button-icon id="btn-logout"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 8l-1.41 1.41L17.17 11H9v2h8.17l-1.58 1.59L17 16l4-4zM5 5h6V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6v-2H5V5z"/></svg></mdui-button-icon>
@@ -116,9 +130,22 @@
           autosize min-rows="3" max-rows="10" autocomplete="off" spellcheck="false"></mdui-text-field>
       </div>
     </div>
-    <div id="pe-other-wrap" hidden style="margin-top:1rem;">
-      <b style="font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;opacity:.6;">Preserved directives — edit on the Raw tab</b>
-      <div id="pe-other" class="mono"></div>
+    <div id="pe-directives-wrap" hidden style="margin-top:1rem;">
+      <div style="display:flex;align-items:center;gap:.25rem;">
+        <b style="font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;opacity:.6;">Directives</b>
+        <span style="font-size:.75rem;opacity:.55;">complex blocks stay raw — Raw tab recommended for heavy edits</span>
+        <span style="flex:1;"></span>
+        <mdui-tooltip content="Add directive">
+          <mdui-button-icon id="pe-add-dir"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></mdui-button-icon>
+        </mdui-tooltip>
+        <mdui-tooltip content="Edit raw Caddyfile">
+          <mdui-button-icon id="pe-goto-raw"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6z"/></svg></mdui-button-icon>
+        </mdui-tooltip>
+        <mdui-tooltip content="Reload Caddy">
+          <mdui-button-icon id="pe-reload"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></mdui-button-icon>
+        </mdui-tooltip>
+      </div>
+      <div id="pe-directives"></div>
     </div>
     <div id="pe-note" class="parsed-row" style="margin-top:.75rem;"></div>
   </div>
@@ -129,6 +156,14 @@
   <div id="edit-error" style="color:rgb(var(--mdui-color-error));white-space:pre-wrap;font-size:.85rem;margin-top:.5rem;"></div>
   <mdui-button slot="action" variant="text" id="edit-cancel">Cancel</mdui-button>
   <mdui-button slot="action" variant="filled" id="edit-save" loading>Save</mdui-button>
+</mdui-dialog>
+
+<!-- plugins dialog -->
+<mdui-dialog id="dlg-plugins" close-on-overlay-click style="min-width:28rem;">
+  <span slot="headline">Plugins</span>
+  <div id="plugin-panels" style="display:flex;flex-direction:column;gap:1rem;"></div>
+  <div id="plugins-empty" class="parsed-row" style="opacity:.65;">No plugins loaded. Add one in Settings → Plugins (local script URL).</div>
+  <mdui-button slot="action" variant="filled" id="plugins-close">Close</mdui-button>
 </mdui-dialog>
 
 <!-- settings dialog -->
@@ -155,6 +190,18 @@
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
         <mdui-button id="btn-upd-check" variant="outlined">Check for updates</mdui-button>
         <mdui-button id="btn-upd-apply" variant="filled" hidden loading></mdui-button>
+      </div>
+    </div>
+    <div>
+      <div style="font-weight:500;margin-bottom:.5rem;">Plugins</div>
+      <div id="plugin-list" style="display:flex;flex-direction:column;gap:.5rem;"></div>
+      <div style="display:flex;gap:.5rem;margin-top:.75rem;align-items:flex-end;">
+        <mdui-text-field id="plugin-url" name="plugin-url" variant="outlined" label="Plugin script URL"
+          placeholder="http://localhost:8090/caddedit-plugin.js" autocomplete="off" spellcheck="false" style="flex:1;"></mdui-text-field>
+        <mdui-button id="plugin-add" variant="outlined">Add</mdui-button>
+      </div>
+      <div class="parsed-row" style="opacity:.65;margin-top:.5rem;">
+        Plugins are local scripts your browser loads into this dashboard. Only add ones you trust.
       </div>
     </div>
   </div>

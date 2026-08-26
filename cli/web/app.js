@@ -321,15 +321,22 @@ function braceDelta(line) {
   return d;
 }
 
-/// Locate header / watch_log / tls / simple reverse_proxy / everything else
-/// ("other" ranges are preserved byte-for-byte on rebuild).
+/// Locate header / watch_log / tls / simple reverse_proxy / everything else.
+/// Everything else becomes editable directive entries: single-line directives
+/// (type + args), directive blocks (raw text), and merged comment/blank runs.
+const KNOWN_TYPES = [
+  "import", "file_server", "redir", "respond", "encode", "header",
+  "php_fastcgi", "root", "try_files", "request_body", "basic_auth",
+  "log", "handle_path", "rewrite", "reverse_proxy", "tls",
+];
+
 function parseSiteBlock(text) {
   const lines = text.split("\n");
   const p = {
     lines,
     headerIdx: -1, headerIndent: "", headerText: "", addrs: [],
     watchIdx: null, tls: null, rp: null,
-    otherRanges: [],
+    directives: [], closeIdx: -1,
   };
   let i = 0;
   while (i < lines.length) {
@@ -351,48 +358,59 @@ function parseSiteBlock(text) {
     return j;
   };
 
-  let depth = 1;
   i++;
-  let cur = null;
-  const flush = () => { if (cur) { p.otherRanges.push(cur); cur = null; } };
   while (i < lines.length) {
     const t = lines[i].trim();
     const delta = braceDelta(lines[i]);
-    if (depth === 1) {
-      const m = t.match(/^(\S+)\s*(.*)$/);
-      const kw = m ? m[1] : "";
-      const rest = m ? m[2] : "";
-      if (!t || t.startsWith("#")) {
-        if (cur) cur.end = i; else cur = { start: i, end: i };
-      } else if (kw === "import" && rest === "request_watch_log") {
-        flush();
-        p.watchIdx = i;
-      } else if (kw === "tls" && delta > 0) {
-        flush();
-        const end = consumeBlock(i);
-        p.tls = { start: i, end, block: true, args: "", raw: lines.slice(i, end + 1).join("\n") };
-        i = end;
-      } else if (kw === "tls") {
-        flush();
-        p.tls = { start: i, end: i, block: false, args: rest, raw: lines[i] };
-      } else if (kw === "reverse_proxy" && delta <= 0 && rest && !rest.includes("{")) {
-        flush();
-        p.rp = { start: i, target: rest };
-      } else if (delta > 0) {
-        flush();
-        const end = consumeBlock(i);
-        p.otherRanges.push({ start: i, end });
-        i = end;
-      } else {
-        flush();
-        p.otherRanges.push({ start: i, end: i });
+    const m = t.match(/^(\S+)\s*(.*)$/);
+    const kw = m ? m[1] : "";
+    const rest = m ? m[2] : "";
+    if (!t || t.startsWith("#")) {
+      const start = i;
+      while (i + 1 < lines.length) {
+        const nt = lines[i + 1].trim();
+        if (!nt || nt.startsWith("#")) i++;
+        else break;
       }
+      p.directives.push({ kind: "raw", type: "raw", start, end: i, raw: lines.slice(start, i + 1).join("\n") });
+      i++;
+      continue;
     }
-    depth += delta;
-    if (depth <= 0) { flush(); break; }
+    if (delta < 0) { p.closeIdx = i; break; }
+    if (kw === "import" && rest === "request_watch_log") {
+      p.watchIdx = i;
+      i++;
+      continue;
+    }
+    if (kw === "tls" && delta > 0) {
+      const end = consumeBlock(i);
+      p.tls = { start: i, end, block: true, args: "", raw: lines.slice(i, end + 1).join("\n") };
+      i = end + 1;
+      continue;
+    }
+    if (kw === "tls") {
+      p.tls = { start: i, end: i, block: false, args: rest, raw: lines[i] };
+      i++;
+      continue;
+    }
+    if (kw === "reverse_proxy" && delta <= 0 && rest && !rest.includes("{")) {
+      p.rp = { start: i, target: rest };
+      i++;
+      continue;
+    }
+    if (delta > 0) {
+      const end = consumeBlock(i);
+      p.directives.push({ kind: "block", type: kw, start: i, end, raw: lines.slice(i, end + 1).join("\n") });
+      i = end + 1;
+      continue;
+    }
+    if (KNOWN_TYPES.includes(kw)) {
+      p.directives.push({ kind: "simple", type: kw, args: rest, start: i, end: i });
+    } else {
+      p.directives.push({ kind: "raw", type: "raw", start: i, end: i, raw: lines[i] });
+    }
     i++;
   }
-  flush();
   return p;
 }
 
@@ -436,6 +454,27 @@ function tlsReplacement(st) {
   }
 }
 
+/// Replacement lines for one directive row. Empty array = remove it.
+function directiveReplacement(d) {
+  if (d.type === "raw") {
+    const raw = (d.raw || "").replace(/\s+$/, "");
+    if (!raw.trim()) return [];
+    return raw.split("\n").map((l) => (/^\s/.test(l) ? l : "\t" + l));
+  }
+  const args = (d.args || "").trim();
+  return ["\t" + d.type + (args ? " " + args : "")];
+}
+
+function directiveChanged(d) {
+  if (!d.orig || d.fresh || d.deleted) return true;
+  if (d.type === "raw") return (d.raw || "").replace(/\s+$/, "") !== (d.orig.raw || "").replace(/\s+$/, "");
+  return d.type !== d.orig.type || (d.args || "").trim() !== (d.orig.args || "").trim();
+}
+
+function directivesDirty() {
+  return editModel.directives.some((d) => d.fresh || d.deleted || directiveChanged(d));
+}
+
 /// Surgical rebuild: only lines touched through the GUI change; everything
 /// else (comments, blank lines, complex blocks) stays byte-for-byte.
 function buildParsedSource() {
@@ -451,6 +490,12 @@ function buildParsedSource() {
   if (!p.tls) {
     const rep = tlsReplacement(st);
     if (rep && rep.length) inserts.push(...rep);
+  }
+  const fresh = editModel.directives.filter((d) => d.fresh && !d.deleted);
+
+  const byStart = new Map();
+  for (const d of editModel.directives) {
+    if (d.start >= 0) byStart.set(d.start, d);
   }
 
   const out = [];
@@ -486,7 +531,23 @@ function buildParsedSource() {
       }
       continue;
     }
+    if (byStart.has(i)) {
+      const d = byStart.get(i);
+      if (d.deleted) { i = d.end; continue; }
+      if (directiveChanged(d)) {
+        out.push(...directiveReplacement(d));
+        i = d.end;
+        continue;
+      }
+      /* unchanged: fall through, emit original lines verbatim */
+    }
+    if (i === p.closeIdx) {
+      for (const d of fresh) out.push(...directiveReplacement(d));
+    }
     out.push(p.lines[i]);
+  }
+  if (p.closeIdx < 0) {
+    for (const d of fresh) out.push(...directiveReplacement(d));
   }
   return out.join("\n");
 }
@@ -501,13 +562,72 @@ function parsedDirty() {
     st.mode !== i.mode ||
     st.detail !== i.detail ||
     st.raw.trim() !== i.raw.trim() ||
-    st.watch !== i.watch
+    st.watch !== i.watch ||
+    directivesDirty()
   );
+}
+
+function directiveRow(d) {
+  const row = document.createElement("div");
+  row.className = "dir-row";
+  if (d.kind === "simple" && d.type !== "raw") {
+    const sel = document.createElement("mdui-select");
+    sel.variant = "outlined";
+    sel.label = "type";
+    for (const t of KNOWN_TYPES) {
+      const mi = document.createElement("mdui-menu-item");
+      mi.value = t;
+      mi.textContent = t;
+      sel.append(mi);
+    }
+    sel.value = d.type;
+    sel.addEventListener("change", () => {
+      d.type = sel.value;
+      renderDirectives();
+    });
+    row.append(sel);
+    const inp = document.createElement("mdui-text-field");
+    inp.variant = "outlined";
+    inp.label = "arguments";
+    inp.value = d.args || "";
+    inp.setAttribute("autocomplete", "off");
+    inp.setAttribute("spellcheck", "false");
+    inp.addEventListener("input", () => (d.args = inp.value));
+    row.append(inp);
+  } else {
+    const ta = document.createElement("mdui-text-field");
+    ta.className = "mono";
+    ta.variant = "outlined";
+    ta.label = d.kind === "block" ? `${d.type} (block — raw)` : "raw";
+    ta.value = d.raw || "";
+    ta.setAttribute("autosize", "");
+    ta.setAttribute("min-rows", "1");
+    ta.setAttribute("max-rows", "12");
+    ta.setAttribute("autocomplete", "off");
+    ta.setAttribute("spellcheck", "false");
+    ta.addEventListener("input", () => (d.raw = ta.value));
+    row.append(ta);
+  }
+  const del = document.createElement("mdui-button-icon");
+  del.innerHTML = ICONS.trash;
+  del.addEventListener("click", () => {
+    d.deleted = true;
+    renderDirectives();
+  });
+  row.append(del);
+  return row;
+}
+
+function renderDirectives() {
+  const wrap = $("#pe-directives");
+  wrap.innerHTML = "";
+  for (const d of editModel.directives) wrap.append(directiveRow(d));
+  $("#pe-directives-wrap").hidden = editModel.directives.length === 0;
 }
 
 function hydrateParsedEditor(r, raw) {
   const p = parseSiteBlock(raw);
-  editModel = { raw, p, initial: null };
+  editModel = { raw, p, initial: null, directives: [] };
   $("#parsed-summary").innerHTML = parsedHtml(r);
 
   const upstream = p.rp ? p.rp.target : "";
@@ -531,17 +651,19 @@ function hydrateParsedEditor(r, raw) {
   $("#pe-watch-log").checked = p.watchIdx != null;
   updateTlsFields();
 
-  const other = p.otherRanges
-    .map((rg) => p.lines.slice(rg.start, rg.end + 1).join("\n"))
-    .join("\n");
-  $("#pe-other-wrap").hidden = !other;
-  $("#pe-other").textContent = other.length > 2000 ? other.slice(0, 2000) + "\n…" : other;
+  editModel.directives = p.directives.map((d) => ({
+    ...d,
+    deleted: false,
+    fresh: false,
+    orig: { type: d.type, args: d.args || "", raw: d.raw || "" },
+  }));
+  renderDirectives();
 
   const notes = [];
   if (p.headerIdx < 0) notes.push("No site block header found — use the Raw tab.");
   if (r.kind === "proxy" && !p.rp && r.upstreams.length)
     notes.push(
-      "Complex reverse_proxy block(s) are preserved verbatim; the upstream field only controls a simple `reverse_proxy <target>` line."
+      "Complex reverse_proxy block(s) are preserved below; the upstream field only controls a simple `reverse_proxy <target>` line."
     );
   if (r.kind === "raw")
     notes.push("The structured parser can't fully model this route — prefer the Raw tab.");
@@ -586,13 +708,40 @@ async function openEditor(r) {
 $("#edit-cancel").addEventListener("click", () => ($("#dlg-edit").open = false));
 $("#edit-save").addEventListener("click", saveEditor);
 
+function syncRawFromParsed() {
+  if (parsedDirty()) $("#edit-content").value = buildParsedSource();
+}
+
 $("#edit-tabs").addEventListener("change", () => {
   const v = $("#edit-tabs").value;
-  if (v === "raw" && parsedDirty()) $("#edit-content").value = buildParsedSource();
+  if (v === "raw") syncRawFromParsed();
   setEditTab(v);
 });
 
 $("#pe-tls").addEventListener("change", updateTlsFields);
+
+$("#pe-add-dir").addEventListener("click", () => {
+  editModel.directives.push({
+    kind: "simple", type: "respond", args: "",
+    start: -1, end: -1, deleted: false, fresh: true, orig: null,
+  });
+  renderDirectives();
+});
+
+$("#pe-goto-raw").addEventListener("click", () => {
+  syncRawFromParsed();
+  $("#edit-tabs").value = "raw";
+  setEditTab("raw");
+});
+
+$("#pe-reload").addEventListener("click", async () => {
+  try {
+    const res = await api("/api/reload", { method: "POST" });
+    toast(res.ok ? "caddy reloaded" : `reload failed: ${res.error}`);
+  } catch (e) {
+    toast(e.message, { action: "dismiss" });
+  }
+});
 
 async function saveEditor() {
   const btn = $("#edit-save");
@@ -688,6 +837,134 @@ async function createRoute() {
   }
 }
 
+/* ---------- plugins (local, client-side scripts) ---------- */
+
+const PLUGIN_KEY = "caddedit-plugins";
+const pluginRegistry = [];
+
+function pluginList() {
+  try {
+    return JSON.parse(localStorage.getItem(PLUGIN_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function savePluginList(list) {
+  localStorage.setItem(PLUGIN_KEY, JSON.stringify(list));
+}
+
+/* The API surface plugins get. A plugin script calls:
+     caddedit.registerPlugin({ id, name, render(el, caddedit) })
+   `el` is its panel container inside the Plugins dialog. */
+window.caddedit = {
+  registerPlugin(def) {
+    if (!def || !def.id) return;
+    const i = pluginRegistry.findIndex((p) => p.id === def.id);
+    if (i >= 0) pluginRegistry[i] = def;
+    else pluginRegistry.push(def);
+    if ($("#dlg-plugins").open) renderPluginPanels();
+  },
+  api,
+  toast,
+  refresh: () => loadAll(),
+  get routes() {
+    return routes;
+  },
+};
+
+function loadPluginScripts() {
+  for (const p of pluginList()) {
+    if (!p.enabled) continue;
+    const s = document.createElement("script");
+    s.src = p.url;
+    s.async = false;
+    s.onerror = () => toast(`plugin failed to load: ${p.url}`, { action: "dismiss" });
+    document.head.append(s);
+  }
+}
+
+function renderPluginPanels() {
+  const wrap = $("#plugin-panels");
+  wrap.innerHTML = "";
+  $("#plugins-empty").hidden = pluginRegistry.length > 0;
+  for (const def of pluginRegistry) {
+    const card = document.createElement("div");
+    card.className = "plugin-card";
+    const title = document.createElement("div");
+    title.style.fontWeight = "600";
+    title.style.marginBottom = ".5rem";
+    title.textContent = def.name || def.id;
+    const body = document.createElement("div");
+    card.append(title, body);
+    try {
+      if (typeof def.render === "function") def.render(body, window.caddedit);
+      else body.textContent = "plugin has no render()";
+    } catch (e) {
+      body.textContent = `plugin error: ${e.message}`;
+    }
+    wrap.append(card);
+  }
+}
+
+function renderPluginSettings() {
+  const wrap = $("#plugin-list");
+  wrap.innerHTML = "";
+  const list = pluginList();
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "parsed-row";
+    empty.style.opacity = ".6";
+    empty.textContent = "No plugins added yet.";
+    wrap.append(empty);
+    return;
+  }
+  list.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "plugin-entry";
+    const sw = document.createElement("mdui-switch");
+    sw.checked = p.enabled;
+    sw.addEventListener("change", () => {
+      const l = pluginList();
+      l[i].enabled = sw.checked;
+      savePluginList(l);
+      location.reload();
+    });
+    const url = document.createElement("div");
+    url.className = "url mono";
+    url.textContent = p.url;
+    const del = document.createElement("mdui-button-icon");
+    del.innerHTML = ICONS.trash;
+    del.addEventListener("click", () => {
+      const l = pluginList();
+      l.splice(i, 1);
+      savePluginList(l);
+      location.reload();
+    });
+    row.append(sw, url, del);
+    wrap.append(row);
+  });
+}
+
+$("#btn-plugins").addEventListener("click", () => {
+  renderPluginPanels();
+  $("#dlg-plugins").open = true;
+});
+$("#plugins-close").addEventListener("click", () => ($("#dlg-plugins").open = false));
+$("#plugin-add").addEventListener("click", () => {
+  const field = $("#plugin-url");
+  const url = field.value.trim();
+  if (!url) return;
+  const list = pluginList();
+  if (list.some((p) => p.url === url)) {
+    toast("plugin already added");
+    return;
+  }
+  list.push({ url, enabled: true });
+  savePluginList(list);
+  location.reload();
+});
+
 /* ---------- self-update ---------- */
 
 function setUpdText(html) {
@@ -761,6 +1038,8 @@ $("#btn-upd-apply").addEventListener("click", async () => {
 
 (async () => {
   checkForUpdates(true);
+  renderPluginSettings();
+  loadPluginScripts();
   const unlocked = await loadStatus().catch(() => false);
   if (unlocked) await loadAll();
 })();
