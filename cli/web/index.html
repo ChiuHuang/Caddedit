@@ -29,6 +29,7 @@
   }
   #pe-tls-raw-wrap textarea { min-height: 0; }
   mdui-tabs { margin-top: 0.5rem; }
+  mdui-button[hidden] { display: none !important; }
   .pe-other {
     background: rgb(var(--mdui-color-surface-container));
     border-radius: var(--mdui-shape-corner-medium);
@@ -190,7 +191,7 @@
       </div>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
         <mdui-button id="btn-upd-check" variant="outlined">Check for updates</mdui-button>
-        <mdui-button id="btn-upd-apply" variant="filled" hidden loading></mdui-button>
+        <mdui-button id="btn-upd-apply" variant="filled" hidden></mdui-button>
       </div>
     </div>
     <div>
