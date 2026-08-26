@@ -2,6 +2,8 @@
 
 # Caddedit
 
+> 🌐 English | [繁體中文](README.zh-TW.md)
+
 **Split, inspect and toggle Caddy site blocks — without pain.**
 
 One static binary. No Python. No daemon. Your Caddyfile stays the source of truth.
