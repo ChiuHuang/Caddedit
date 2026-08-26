@@ -24,6 +24,26 @@ pub struct AppState {
     paths: Paths,
     password: Option<String>,
     sessions: Mutex<HashSet<String>>,
+    update: Mutex<UpdateState>,
+}
+
+/// Live status of the self-update worker shown as a progress bar in the UI.
+#[derive(Clone, Default, serde::Serialize)]
+struct UpdateState {
+    running: bool,
+    /// idle | checking | downloading | installing | restarting | done | error
+    stage: String,
+    message: String,
+    target: Option<String>,
+    /// unix millis when the update started (0 = not started)
+    started_at: u64,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 type SharedState = Arc<AppState>;
@@ -474,50 +494,70 @@ async fn update_check() -> Response {
     }
 }
 
-async fn update_apply() -> Response {
-    let latest = match tokio::task::spawn_blocking(crate::selfupdate::latest_version)
-        .await
-        .unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string())))
+async fn update_status(State(st): State<SharedState>) -> Response {
+    let u = st.update.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    Json(u).into_response()
+}
+
+async fn update_apply(State(st): State<SharedState>) -> Response {
     {
-        Ok(v) => v,
-        Err(e) => {
-            return err(
-                StatusCode::BAD_GATEWAY,
-                format!("version check failed: {e}"),
-            )
+        let mut u = st.update.lock().unwrap_or_else(|p| p.into_inner());
+        if u.running {
+            return err(StatusCode::CONFLICT, "update already in progress");
         }
-    };
-    if !crate::selfupdate::is_newer(&latest, env!("CARGO_PKG_VERSION")) {
-        return Json(json!({
-            "ok": true,
-            "updated": false,
-            "message": format!("already on v{}", env!("CARGO_PKG_VERSION"))
-        }))
-        .into_response();
+        u.running = true;
+        u.stage = "checking".into();
+        u.message = "checking GitHub releases".into();
+        u.target = None;
+        u.started_at = now_ms();
     }
 
-    // download + verify + install (bounded work, safe inside this request)
-    let install = tokio::task::spawn_blocking(move || crate::selfupdate::install_version(&latest))
-        .await
-        .unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string())));
-    let message = match install {
-        Ok(m) => m,
-        Err(e) => return err(StatusCode::BAD_GATEWAY, e.to_string()),
-    };
+    let worker = st.clone();
+    tokio::spawn(async move {
+        let set = |stage: &str, msg: &str| {
+            if let Ok(mut u) = worker.update.lock() {
+                u.stage = stage.into();
+                u.message = msg.into();
+            }
+        };
+        let result: anyhow::Result<String> = async {
+            let latest = tokio::task::spawn_blocking(crate::selfupdate::latest_version)
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))??;
+            if !crate::selfupdate::is_newer(&latest, env!("CARGO_PKG_VERSION")) {
+                return Ok(format!("already on v{}", env!("CARGO_PKG_VERSION")));
+            }
+            if let Ok(mut u) = worker.update.lock() {
+                u.target = Some(latest.clone());
+            }
+            set("downloading", &format!("downloading v{latest}"));
+            let install =
+                tokio::task::spawn_blocking(move || crate::selfupdate::install_version(&latest))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))??;
+            set("restarting", "handing over to systemd");
+            tokio::task::spawn_blocking(crate::selfupdate::schedule_restart)
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))??;
+            Ok(install)
+        }
+        .await;
 
-    // hand the restart to a transient unit so it survives our own shutdown
-    let restart_scheduled = tokio::task::spawn_blocking(crate::selfupdate::schedule_restart)
-        .await
-        .unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string())))
-        .is_ok();
+        let mut u = worker.update.lock().unwrap_or_else(|p| p.into_inner());
+        u.running = false;
+        match result {
+            Ok(msg) => {
+                u.stage = "done".into();
+                u.message = msg;
+            }
+            Err(e) => {
+                u.stage = "error".into();
+                u.message = e.to_string();
+            }
+        }
+    });
 
-    Json(json!({
-        "ok": true,
-        "updated": true,
-        "restarting": restart_scheduled,
-        "message": message,
-    }))
-    .into_response()
+    Json(json!({"ok": true, "started": true})).into_response()
 }
 
 /* ---------- wiring ---------- */
@@ -531,6 +571,7 @@ pub async fn run(host: &str, port: u16, paths: Paths) -> anyhow::Result<()> {
         paths,
         password,
         sessions: Mutex::new(HashSet::new()),
+        update: Mutex::new(UpdateState::default()),
     });
 
     let api = Router::new()
@@ -543,6 +584,7 @@ pub async fn run(host: &str, port: u16, paths: Paths) -> anyhow::Result<()> {
         .route("/api/vhosts/{id}", axum::routing::delete(delete_vhost))
         .route("/api/reload", post(reload_now))
         .route("/api/update/check", get(update_check))
+        .route("/api/update/status", get(update_status))
         .route("/api/update", post(update_apply))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth_mw))
         .with_state(state);
