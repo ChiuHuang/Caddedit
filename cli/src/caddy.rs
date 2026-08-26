@@ -59,9 +59,26 @@ fn snippet_prelude(paths: &Paths) -> Option<String> {
     }
 }
 
+/// `caddy adapt` — syntax-level check that stops short of provisioning
+/// modules, so env-dependent blocks (e.g. `{env.…}` DNS API tokens) don't
+/// fail validation in environments where those variables aren't set.
+fn adapt_file(path: &Path) -> Result<String> {
+    run(&[
+        "adapt",
+        "--adapter",
+        "caddyfile",
+        "--config",
+        &path.to_string_lossy(),
+        "--quiet",
+    ])
+    .map_err(|e| anyhow!(e))
+}
+
 /// Validate a single site-block file. Snippets from the main Caddyfile are
 /// prepended when the block imports one, since `caddy validate` on a lone
-/// file cannot resolve those imports on its own.
+/// file cannot resolve those imports on its own. Provisioning failures that
+/// only stem from a bare environment (missing API tokens) fall back to the
+/// syntax-level `adapt` check.
 pub fn validate_site(paths: &Paths, path: &Path) -> Result<String> {
     match validate_file(path) {
         Ok(out) => Ok(out),
@@ -77,7 +94,21 @@ pub fn validate_site(paths: &Paths, path: &Path) -> Result<String> {
             ));
             fs::write(&tmp, format!("{prelude}\n\n{body}"))
                 .with_context(|| format!("writing {}", tmp.display()))?;
-            let result = validate_file(&tmp);
+            let result = match validate_file(&tmp) {
+                Ok(out) => Ok(out),
+                Err(e) => {
+                    if e.to_string().contains("provision")
+                        || e.to_string().contains("appears invalid")
+                    {
+                        match adapt_file(&tmp) {
+                            Ok(_) => Ok(String::new()),
+                            Err(adapt_err) => Err(adapt_err),
+                        }
+                    } else {
+                        Err(e)
+                    }
+                }
+            };
             let _ = fs::remove_file(&tmp);
             result
         }
