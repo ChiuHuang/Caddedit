@@ -60,7 +60,7 @@ fn latest_stable_version() -> Result<String> {
     Ok(tag.trim_start_matches('v').to_string())
 }
 
-/// Latest nightly version as `x.x.x_rnd` where `x.x.x` is latest stable.
+/// Latest nightly version as `x.x.x_rnd<date>` where `x.x.x` is latest stable + random date suffix.
 pub fn latest_nightly_version() -> Result<String> {
     // Verify nightly tag exists (rolling release)
     let json = curl(&[
@@ -78,9 +78,23 @@ pub fn latest_nightly_version() -> Result<String> {
     v["tag_name"]
         .as_str()
         .ok_or_else(|| anyhow!("nightly response missing tag_name"))?;
-    // Use current stable version + _rnd as nightly version (x.x.x_rnd)
+    // Use current stable version + _rnd + date suffix (e.g., 0.5.9_rnd20260827)
     let stable = latest_stable_version()?;
-    Ok(format!("{}_rnd", stable))
+    let published_at = v.get("published_at").and_then(|p| p.as_str()).unwrap_or("");
+    let date_suffix = published_at
+        .split('T')
+        .next()
+        .unwrap_or("")
+        .replace('-', "");
+    let suffix = if date_suffix.is_empty() {
+        // fallback to random 4 digits from getrandom
+        let mut buf = [0u8; 2];
+        let _ = getrandom::fill(&mut buf);
+        format!("{:04}", u16::from_le_bytes(buf) % 10000)
+    } else {
+        date_suffix
+    };
+    Ok(format!("{}_rnd{}", stable, suffix))
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -184,9 +198,23 @@ pub fn release_info_for(channel: &str) -> Result<ReleaseInfo> {
             .and_then(|b| b.as_str())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
-        // nightly version is stable + _rnd (e.g., 0.5.7_rnd)
+        // nightly version is stable + _rnd + date/random (e.g., 0.5.9_rnd20260827)
         let stable = latest_stable_version().unwrap_or_else(|_| "0.0.0".to_string());
-        let version = format!("{}_rnd", stable);
+        let date_suffix = published_at
+            .as_deref()
+            .unwrap_or("")
+            .split('T')
+            .next()
+            .unwrap_or("")
+            .replace('-', "");
+        let suffix = if date_suffix.is_empty() {
+            let mut buf = [0u8; 2];
+            let _ = getrandom::fill(&mut buf);
+            format!("{:04}", u16::from_le_bytes(buf) % 10000)
+        } else {
+            date_suffix
+        };
+        let version = format!("{}_rnd{}", stable, suffix);
         let notes = body.map(|b| {
             if b.len() > 4000 {
                 format!(
@@ -267,16 +295,14 @@ pub fn is_newer_for(latest: &str, current: &str, channel: &str) -> bool {
         if latest == "nightly" {
             return true;
         }
-        if latest.ends_with("_rnd") {
-            // x.x.x_rnd is newer than x.x.x stable, equal _rnd is not newer
-            let latest_base = latest.trim_end_matches("_rnd");
-            let current_base = current.trim_end_matches("_rnd");
-            if version_tuple(latest_base) > version_tuple(current_base) {
+        if latest.contains("_rnd") {
+            // x.x.x_rnd* is newer than x.x.x stable, equal _rnd* is not newer
+            if version_tuple(latest) > version_tuple(current) {
                 return true;
             }
-            if version_tuple(latest_base) == version_tuple(current_base)
-                && latest.ends_with("_rnd")
-                && !current.ends_with("_rnd")
+            if version_tuple(latest) == version_tuple(current)
+                && latest.contains("_rnd")
+                && !current.contains("_rnd")
             {
                 return true;
             }
@@ -308,7 +334,7 @@ echo "installed $(/usr/local/bin/caddedit --version)"
 pub fn install_version(version: &str) -> Result<String> {
     let target =
         asset_name().ok_or_else(|| anyhow!("auto-update not supported on this platform"))?;
-    let tag = if version == "nightly" || version.starts_with("nightly") || version.ends_with("_rnd")
+    let tag = if version == "nightly" || version.starts_with("nightly") || version.contains("_rnd")
     {
         "nightly".to_string()
     } else {
