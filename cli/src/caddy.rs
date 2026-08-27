@@ -62,7 +62,7 @@ fn snippet_prelude(paths: &Paths) -> Option<String> {
 /// `caddy adapt` — syntax-level check that stops short of provisioning
 /// modules, so env-dependent blocks (e.g. `{env.…}` DNS API tokens) don't
 /// fail validation in environments where those variables aren't set.
-fn adapt_file(path: &Path) -> Result<String> {
+pub fn adapt_file(path: &Path) -> Result<String> {
     run(&[
         "adapt",
         "--adapter",

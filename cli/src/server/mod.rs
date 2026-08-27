@@ -14,6 +14,8 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+pub mod auth;
+
 const COOKIE: &str = "caddedit_session";
 
 #[derive(RustEmbed)]
@@ -25,9 +27,10 @@ pub struct AppState {
     password: Option<String>,
     sessions: Mutex<HashSet<String>>,
     update: Mutex<UpdateState>,
+    refresh_token: Mutex<Option<auth::RefreshToken>>,
+    access_tokens: Mutex<HashMap<String, u64>>, // token -> expiry ms
 }
 
-/// Live status of the self-update worker shown as a progress bar in the UI.
 #[derive(Clone, Default, serde::Serialize)]
 struct UpdateState {
     running: bool,
@@ -67,9 +70,56 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
     None
 }
 
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?;
+    let s = v.to_str().ok()?;
+    let tok = s.strip_prefix("Bearer ")?;
+    Some(tok.trim().to_string())
+}
+
+fn user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+}
+
+fn is_access_token_valid(st: &AppState, token: &str) -> bool {
+    let mut map = match st.access_tokens.lock() {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if let Some(&expiry) = map.get(token) {
+        if expiry > now_ms() {
+            return true;
+        } else {
+            // expired, remove lazily
+            map.remove(token);
+        }
+    }
+    false
+}
+
+fn is_cli_user_agent(ua: Option<&String>) -> bool {
+    match ua {
+        Some(s) => s.starts_with("caddedit-cli/"),
+        None => false,
+    }
+}
+
 fn authenticated(st: &AppState, headers: &HeaderMap) -> bool {
     if st.password.is_none() {
         return true;
+    }
+    // Bearer access token (CLI) takes precedence — must present valid CLI User-Agent
+    if let Some(tok) = bearer_token(headers) {
+        let ua = user_agent(headers);
+        if !is_cli_user_agent(ua.as_ref()) {
+            return false;
+        }
+        if is_access_token_valid(st, &tok) {
+            return true;
+        }
     }
     match session_token(headers) {
         Some(tok) => st
@@ -83,7 +133,10 @@ fn authenticated(st: &AppState, headers: &HeaderMap) -> bool {
 
 async fn auth_mw(State(st): State<SharedState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
-    let open = path == "/api/status" || path == "/api/login";
+    // open endpoints: status and auth exchange (login + refresh)
+    let open = path == "/api/status"
+        || path == "/api/login"
+        || path == "/api/auth/refresh";
     if open || st.password.is_none() {
         return next.run(req).await;
     }
@@ -156,8 +209,6 @@ struct CreateReq {
     tls: String,
     #[serde(default)]
     watch_log: bool,
-    /// When present, the request creates the route from a raw site block
-    /// instead of the structured fields (dashboard "Raw" create tab).
     #[serde(default)]
     source: Option<String>,
 }
@@ -165,9 +216,19 @@ fn default_tls() -> String {
     "internal".into()
 }
 
+#[derive(Deserialize)]
+struct RefreshReq {
+    refresh_token: String,
+}
+
 /* ---------- handlers ---------- */
 
 async fn status(State(st): State<SharedState>, headers: HeaderMap) -> Response {
+    let has_refresh = st
+        .refresh_token
+        .lock()
+        .map(|m| m.is_some())
+        .unwrap_or(false);
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
         "config_path": st.paths.caddyfile.display().to_string(),
@@ -175,6 +236,7 @@ async fn status(State(st): State<SharedState>, headers: HeaderMap) -> Response {
         "caddy_available": caddy::caddy_available(),
         "auth_required": st.password.is_some(),
         "authenticated": authenticated(&st, &headers),
+        "has_refresh_token": has_refresh,
     }))
     .into_response()
 }
@@ -218,6 +280,117 @@ async fn logout(State(st): State<SharedState>, headers: HeaderMap) -> Response {
         Json(json!({"ok": true})),
     )
         .into_response()
+}
+
+/* ---------- auth token handlers ---------- */
+
+async fn token_status(State(st): State<SharedState>) -> Response {
+    let rt = st.refresh_token.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let access_count = st
+        .access_tokens
+        .lock()
+        .map(|m| {
+            let now = now_ms();
+            m.values().filter(|&&exp| exp > now).count()
+        })
+        .unwrap_or(0);
+    Json(json!({
+        "has_refresh_token": rt.is_some(),
+        "refresh_created_at": rt.as_ref().map(|r| r.created_at),
+        "refresh_created_by_ua": rt.as_ref().and_then(|r| r.created_by_ua.clone()),
+        "active_access_tokens": access_count,
+        "access_ttl_ms": auth::ACCESS_TOKEN_TTL_MS,
+    }))
+    .into_response()
+}
+
+async fn generate_refresh_token(State(st): State<SharedState>, headers: HeaderMap) -> Response {
+    // requires already authenticated (via session or access token)
+    let ua = user_agent(&headers);
+    let new_token = fsutil::random_token();
+    let rt = auth::RefreshToken {
+        token: new_token.clone(),
+        created_at: now_ms(),
+        created_by_ua: ua.clone(),
+    };
+    {
+        let mut guard = match st.refresh_token.lock() {
+            Ok(g) => g,
+            Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "lock poisoned"),
+        };
+        *guard = Some(rt.clone());
+        // persist
+        if let Err(e) = auth::save_refresh(&st.paths, &*guard) {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to persist refresh token: {e}"),
+            );
+        }
+    }
+    // invalidate all existing access tokens (old refresh no longer usable indirectly)
+    if let Ok(mut m) = st.access_tokens.lock() {
+        m.clear();
+    }
+    eprintln!(
+        "refresh token rotated (ua={}) at {}",
+        ua.unwrap_or_else(|| "-".into()),
+        rt.created_at
+    );
+    Json(json!({
+        "ok": true,
+        "refresh_token": new_token,
+        "created_at": rt.created_at,
+        "note": "copy now — this token is shown once. Old refresh token is invalidated. Use it to generate day-long access tokens via POST /api/auth/refresh."
+    }))
+    .into_response()
+}
+
+async fn refresh_access_token(
+    State(st): State<SharedState>,
+    headers: HeaderMap,
+    Json(req): Json<RefreshReq>,
+) -> Response {
+    let ua = user_agent(&headers);
+    // CLI must identify itself via User-Agent
+    if !is_cli_user_agent(ua.as_ref()) {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "missing or invalid User-Agent: expected caddedit-cli/<version>",
+        );
+    }
+    let stored = st
+        .refresh_token
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    let rt = match stored {
+        Some(r) => r,
+        None => return err(StatusCode::NOT_FOUND, "no refresh token configured — generate one in Settings"),
+    };
+    if req.refresh_token.trim() != rt.token {
+        return err(StatusCode::UNAUTHORIZED, "invalid refresh token");
+    }
+    let access = fsutil::random_token();
+    let expires_at = now_ms() + auth::ACCESS_TOKEN_TTL_MS;
+    if let Ok(mut m) = st.access_tokens.lock() {
+        // purge expired
+        let now = now_ms();
+        m.retain(|_, &mut exp| exp > now);
+        m.insert(access.clone(), expires_at);
+    }
+    eprintln!(
+        "access token issued (ua={}) expires_at={}",
+        ua.unwrap_or_else(|| "-".into()),
+        expires_at
+    );
+    Json(json!({
+        "ok": true,
+        "access_token": access,
+        "token_type": "Bearer",
+        "expires_at": expires_at,
+        "expires_in": auth::ACCESS_TOKEN_TTL_MS / 1000,
+    }))
+    .into_response()
 }
 
 async fn list_vhosts(State(st): State<SharedState>) -> Response {
@@ -567,17 +740,24 @@ pub async fn run(host: &str, port: u16, paths: Paths) -> anyhow::Result<()> {
         .ok()
         .filter(|p| !p.is_empty());
 
+    let initial_refresh = auth::load_refresh(&paths);
+
     let state: SharedState = Arc::new(AppState {
         paths,
         password,
         sessions: Mutex::new(HashSet::new()),
         update: Mutex::new(UpdateState::default()),
+        refresh_token: Mutex::new(initial_refresh),
+        access_tokens: Mutex::new(HashMap::new()),
     });
 
     let api = Router::new()
         .route("/api/status", get(status))
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
+        .route("/api/auth/tokens/status", get(token_status))
+        .route("/api/auth/tokens/generate", post(generate_refresh_token))
+        .route("/api/auth/refresh", post(refresh_access_token))
         .route("/api/vhosts", get(list_vhosts).post(create_vhost))
         .route("/api/vhosts/{id}/raw", get(get_raw).put(put_raw))
         .route("/api/vhosts/{id}/toggle", post(toggle_vhost))
@@ -602,3 +782,168 @@ pub async fn run(host: &str, port: u16, paths: Paths) -> anyhow::Result<()> {
 }
 
 use owo_colors::OwoColorize;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Paths;
+    use axum::http::{header, HeaderMap, HeaderValue};
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+
+    fn test_state_with_password(pw: Option<&str>) -> SharedState {
+        let tmp = TempDir::new().unwrap();
+        let caddyfile = tmp.path().join("Caddyfile");
+        std::fs::write(&caddyfile, "{ admin off }\n").unwrap();
+        // leak tempdir so paths stay valid for test (we don't need cleanup)
+        let _leaked = Box::leak(Box::new(tmp));
+        let paths = Paths::resolve(Some(caddyfile), None);
+        Arc::new(AppState {
+            paths,
+            password: pw.map(|s| s.to_string()),
+            sessions: Mutex::new(HashSet::new()),
+            update: Mutex::new(UpdateState::default()),
+            refresh_token: Mutex::new(None),
+            access_tokens: Mutex::new(HashMap::new()),
+        })
+    }
+
+    #[test]
+    fn bearer_token_extraction() {
+        let mut hm = HeaderMap::new();
+        hm.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer abc123"),
+        );
+        assert_eq!(bearer_token(&hm).as_deref(), Some("abc123"));
+        let mut hm2 = HeaderMap::new();
+        hm2.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
+        assert!(bearer_token(&hm2).is_none());
+    }
+
+    #[test]
+    fn user_agent_extraction() {
+        let mut hm = HeaderMap::new();
+        hm.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("caddedit-cli/0.5.2"),
+        );
+        assert_eq!(user_agent(&hm).as_deref(), Some("caddedit-cli/0.5.2"));
+        let hm2 = HeaderMap::new();
+        assert!(user_agent(&hm2).is_none());
+    }
+
+    #[test]
+    fn access_token_valid_for_24h_and_expires() {
+        let st = test_state_with_password(Some("secret"));
+        let token = "test_access_token";
+        let future = now_ms() + 100_000;
+        let past = now_ms() - 1000;
+        {
+            let mut m = st.access_tokens.lock().unwrap();
+            m.insert(token.to_string(), future);
+        }
+        assert!(is_access_token_valid(&st, token));
+        {
+            let mut m = st.access_tokens.lock().unwrap();
+            m.insert(token.to_string(), past);
+        }
+        assert!(!is_access_token_valid(&st, token));
+        // expired should be purged
+        assert!(!st.access_tokens.lock().unwrap().contains_key(token));
+    }
+
+    #[test]
+    fn authenticated_accepts_bearer_and_rejects_old_refresh() {
+        let st = test_state_with_password(Some("secret"));
+        // no token -> not authenticated
+        let hm = HeaderMap::new();
+        assert!(!authenticated(&st, &hm));
+        // insert valid access token
+        let at = "valid_access_123";
+        {
+            let mut m = st.access_tokens.lock().unwrap();
+            m.insert(at.to_string(), now_ms() + 86400000);
+        }
+        let mut hm2 = HeaderMap::new();
+        hm2.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {at}")).unwrap(),
+        );
+        hm2.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("caddedit-cli/0.5.2"),
+        );
+        // Bearer should authenticate even without session cookie — requires CLI UA
+        assert!(authenticated(&st, &hm2));
+        // without UA, bearer is rejected
+        let mut hm_no_ua = HeaderMap::new();
+        hm_no_ua.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {at}")).unwrap(),
+        );
+        assert!(!authenticated(&st, &hm_no_ua));
+        // wrong UA also rejected
+        let mut hm_bad_ua = HeaderMap::new();
+        hm_bad_ua.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {at}")).unwrap(),
+        );
+        hm_bad_ua.insert(header::USER_AGENT, HeaderValue::from_static("Mozilla/5.0"));
+        assert!(!authenticated(&st, &hm_bad_ua));
+
+        // refresh token itself should NOT authenticate (only access token)
+        let rt = auth::RefreshToken {
+            token: "refresh_old".into(),
+            created_at: now_ms(),
+            created_by_ua: Some("caddedit-cli/0.5.2".into()),
+        };
+        *st.refresh_token.lock().unwrap() = Some(rt);
+        let mut hm3 = HeaderMap::new();
+        hm3.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer refresh_old"),
+        );
+        hm3.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("caddedit-cli/0.5.2"),
+        );
+        assert!(!authenticated(&st, &hm3));
+    }
+
+    #[test]
+    fn ttl_is_one_day() {
+        assert_eq!(auth::ACCESS_TOKEN_TTL_MS, 86400000);
+    }
+
+    #[tokio::test]
+    async fn refresh_flow_rotation_invalidates_old() {
+        let st = test_state_with_password(Some("secret"));
+        // simulate first refresh token generation (like handler does)
+        let rt1 = "rt1_one_time";
+        *st.refresh_token.lock().unwrap() = Some(auth::RefreshToken {
+            token: rt1.into(),
+            created_at: now_ms(),
+            created_by_ua: Some("caddedit-cli/0.5.2".into()),
+        });
+        // generate access token via rt1
+        {
+            let mut m = st.access_tokens.lock().unwrap();
+            m.insert("at1".into(), now_ms() + auth::ACCESS_TOKEN_TTL_MS);
+        }
+        assert_eq!(st.access_tokens.lock().unwrap().len(), 1);
+        // rotate refresh token (handler clears access_tokens)
+        *st.refresh_token.lock().unwrap() = Some(auth::RefreshToken {
+            token: "rt2_new".into(),
+            created_at: now_ms(),
+            created_by_ua: Some("Mozilla/5.0".into()),
+        });
+        st.access_tokens.lock().unwrap().clear();
+        assert!(st.access_tokens.lock().unwrap().is_empty());
+        // old rt1 no longer matches
+        let stored = st.refresh_token.lock().unwrap().clone().unwrap();
+        assert_ne!(stored.token, rt1);
+        assert_eq!(stored.token, "rt2_new");
+    }
+}

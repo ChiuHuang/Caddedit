@@ -270,9 +270,68 @@ $("#btn-theme").addEventListener("click", () => {
   applyTheme(cur === "dark" ? "light" : "dark");
 });
 
+/* ---------- CLI refresh token ---------- */
+
+async function loadTokenStatus() {
+  try {
+    const s = await api("/api/auth/tokens/status");
+    const el = $("#cli-token-status");
+    if (s.has_refresh_token) {
+      const d = new Date(s.refresh_created_at);
+      el.textContent = `Refresh token exists (created ${d.toLocaleString()}). Active access tokens: ${s.active_access_tokens}.`;
+      $("#cli-token-meta").textContent = s.refresh_created_by_ua ? `Created by UA: ${s.refresh_created_by_ua}` : "";
+    } else {
+      el.textContent = "No refresh token yet — generate one for CLI access.";
+      $("#cli-token-meta").textContent = "";
+    }
+  } catch (e) {
+    $("#cli-token-status").textContent = `Token status: ${e.message}`;
+  }
+}
+
+$("#btn-settings").addEventListener("click", () => {
+  loadTokenStatus();
+  $("#cli-token-display").hidden = true;
+  $("#btn-copy-refresh").hidden = true;
+});
+
+$("#btn-gen-refresh").addEventListener("click", async () => {
+  const btn = $("#btn-gen-refresh");
+  btn.loading = true;
+  try {
+    const r = await api("/api/auth/tokens/generate", { method: "POST", body: JSON.stringify({}) });
+    const disp = $("#cli-token-display");
+    disp.textContent = r.refresh_token;
+    disp.hidden = false;
+    $("#btn-copy-refresh").hidden = false;
+    $("#cli-token-meta").textContent = "Copy now — this is shown once. Old token is now invalid.";
+    toast("refresh token generated — old token invalidated");
+    loadTokenStatus();
+  } catch (e) {
+    toast(e.body?.error || e.message, { action: "dismiss" });
+  }
+  btn.loading = false;
+});
+
+$("#btn-copy-refresh").addEventListener("click", async () => {
+  const tok = $("#cli-token-display").textContent;
+  try {
+    await navigator.clipboard.writeText(tok);
+    toast("copied to clipboard");
+  } catch {
+    toast("copy failed — select and copy manually", { action: "dismiss" });
+  }
+});
+
 /* ---------- editor dialog ---------- */
 
 let editingId = null;
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 
 function parsedHtml(r) {
   const rows = [];
@@ -280,15 +339,15 @@ function parsedHtml(r) {
     proxy: "#26a69a", php: "#42a5f5", static: "#ffb74d",
     simple: "#90a4ae", other: "#90a4ae", raw: "#ef5350",
   }[kindLabel(r.kind)] || "#90a4ae";
-  rows.push(`<div class="parsed-row"><b>Type</b><span class="chip" style="background:${chipColor}33;color:${chipColor}">${kindLabel(r.kind)}</span></div>`);
-  rows.push(`<div class="parsed-row"><b>Domains</b>${r.addresses.join(", ") || r.id}</div>`);
+  rows.push(`<div class="parsed-row"><b>Type</b><span class="chip" style="background:${chipColor}33;color:${chipColor}">${esc(kindLabel(r.kind))}</span></div>`);
+  rows.push(`<div class="parsed-row"><b>Domains</b>${esc(r.addresses.join(", ") || r.id)}</div>`);
   if (r.upstreams.length)
-    rows.push(`<div class="parsed-row"><b>Upstream</b>${r.upstreams.join(", ")}</div>`);
-  if (r.tls) rows.push(`<div class="parsed-row"><b>TLS</b>${tlsLabel(r.tls)}</div>`);
+    rows.push(`<div class="parsed-row"><b>Upstream</b>${esc(r.upstreams.join(", "))}</div>`);
+  if (r.tls) rows.push(`<div class="parsed-row"><b>TLS</b>${esc(tlsLabel(r.tls))}</div>`);
   if (r.watch_log)
     rows.push(`<div class="parsed-row"><b>Logging</b><span class="chip">request_watch_log</span></div>`);
   if ((r.details || []).length) {
-    rows.push(`<div class="parsed-row"><b>Directives</b>${r.details.map((d) => `· ${d}`).join("<br>")}</div>`);
+    rows.push(`<div class="parsed-row"><b>Directives</b>${r.details.map((d) => `· ${esc(d)}`).join("<br>")}</div>`);
   }
   if (r.kind === "raw") {
     rows.push(`<div class="parsed-row" style="opacity:.7">This route uses syntax the structured parser does not fully model — prefer the Raw tab for edits.</div>`);
@@ -331,8 +390,28 @@ const KNOWN_TYPES = [
   "log", "handle_path", "rewrite", "reverse_proxy", "tls",
 ];
 
+/// Map every line belonging to a Caddyfile heredoc (the `<<MARKER` opener
+/// line, its body and the closing marker line) to the closing line's index.
+/// Heredoc content must never be split into separate directives or counted
+/// for braces — CSS/HTML bodies are full of both.
+function scanHeredocs(lines) {
+  const closeAt = new Map();
+  for (let i = 0; i < lines.length; i++) {
+    if (closeAt.has(i)) continue;
+    const m = lines[i].trim().match(/<<([A-Za-z0-9_]+)\s*$/);
+    if (!m) continue;
+    let end = lines.length - 1;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].trim() === m[1]) { end = j; break; }
+    }
+    for (let j = i; j <= end; j++) closeAt.set(j, end);
+  }
+  return closeAt;
+}
+
 function parseSiteBlock(text) {
   const lines = text.split("\n");
+  const heredocEnd = scanHeredocs(lines);
   const p = {
     lines,
     headerIdx: -1, headerIndent: "", headerText: "", addrs: [],
@@ -355,7 +434,10 @@ function parseSiteBlock(text) {
 
   const consumeBlock = (start) => {
     let d = braceDelta(lines[start]), j = start;
-    while (d > 0 && j + 1 < lines.length) { j++; d += braceDelta(lines[j]); }
+    while (d > 0 && j + 1 < lines.length) {
+      j++;
+      if (!heredocEnd.has(j)) d += braceDelta(lines[j]);
+    }
     return j;
   };
 
@@ -377,6 +459,16 @@ function parseSiteBlock(text) {
       i++;
       continue;
     }
+    const hEnd = heredocEnd.get(i);
+    if (hEnd != null && hEnd > i) {
+      p.directives.push({
+        kind: "block", type: kw || "raw", heredoc: true,
+        start: i, end: hEnd, raw: lines.slice(i, hEnd + 1).join("\n"),
+      });
+      i = hEnd + 1;
+      continue;
+    }
+    if (hEnd != null) { i++; continue; }
     if (delta < 0) { p.closeIdx = i; break; }
     if (kw === "import" && rest === "request_watch_log") {
       p.watchIdx = i;
@@ -599,7 +691,9 @@ function directiveRow(d) {
     const ta = document.createElement("mdui-text-field");
     ta.className = "mono";
     ta.variant = "outlined";
-    ta.label = d.kind === "block" ? `${d.type} (block — raw)` : "raw";
+    ta.label = d.kind === "block"
+      ? (d.heredoc ? `${d.type} (heredoc — raw)` : `${d.type} (block — raw)`)
+      : "raw";
     ta.value = d.raw || "";
     ta.setAttribute("autosize", "");
     ta.setAttribute("min-rows", "1");
@@ -662,6 +756,8 @@ function hydrateParsedEditor(r, raw) {
 
   const notes = [];
   if (p.headerIdx < 0) notes.push("No site block header found — use the Raw tab.");
+  if (p.directives.some((d) => d.heredoc))
+    notes.push("Heredoc bodies are kept verbatim as single blocks — edit them as raw text.");
   if (r.kind === "proxy" && !p.rp && r.upstreams.length)
     notes.push(
       "Complex reverse_proxy block(s) are preserved below; the upstream field only controls a simple `reverse_proxy <target>` line."

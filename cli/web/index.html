@@ -218,6 +218,21 @@
         Plugins are local scripts your browser loads into this dashboard. Only add ones you trust.
       </div>
     </div>
+    <div>
+      <div style="font-weight:500;margin-bottom:.5rem;">CLI Access</div>
+      <div id="cli-token-status" class="parsed-row" style="opacity:.75;margin-bottom:.5rem;">Loading token status…</div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+        <mdui-button id="btn-gen-refresh" variant="outlined">Generate refresh token</mdui-button>
+        <mdui-button id="btn-copy-refresh" variant="text" hidden>Copy</mdui-button>
+      </div>
+      <div id="cli-token-display" class="mono" style="margin-top:.5rem;word-break:break-all;background:rgb(var(--mdui-color-surface-container));padding:.5rem;border-radius:8px;max-height:6rem;overflow:auto;" hidden></div>
+      <div id="cli-token-meta" class="parsed-row" style="opacity:.65;margin-top:.5rem;"></div>
+      <div class="parsed-row" style="opacity:.65;margin-top:.5rem;">
+        Refresh token is shown once. Generating a new one invalidates the old. Use it to get a day-long access token:<br>
+        <span class="mono">curl -H "Content-Type: application/json" -H "User-Agent: caddedit-cli/1.0" -d '{"refresh_token":"&lt;token&gt;"}' https://your-server/api/auth/refresh</span><br>
+        Then use <span class="mono">Authorization: Bearer &lt;access_token&gt;</span> for CLI requests (or run <span class="mono">caddedit login --url https://your-server --refresh-token &lt;token&gt;</span>).
+      </div>
+    </div>
   </div>
   <mdui-button slot="action" variant="filled" id="settings-done">Done</mdui-button>
 </mdui-dialog>

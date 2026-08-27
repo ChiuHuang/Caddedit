@@ -1,3 +1,4 @@
+mod auth_client;
 mod caddy;
 mod caddyfile;
 mod config;
@@ -107,6 +108,22 @@ enum Cmd {
         #[arg(short, long, default_value_t = 29048)]
         port: u16,
     },
+    /// Login to a remote caddedit server using a refresh token (User-Agent: caddedit-cli)
+    Login {
+        /// Server URL, e.g. https://caddedit.example.com
+        #[arg(long)]
+        url: String,
+        /// One-time refresh token from Settings → CLI Access
+        #[arg(long)]
+        refresh_token: String,
+        /// Save access token to config file (~/.config/caddedit/cli.json) (default true, use --no-save to print only)
+        #[arg(long)]
+        no_save: bool,
+    },
+    /// Clear stored CLI tokens
+    Logout,
+    /// Show stored CLI config (url + masked tokens)
+    Config,
 }
 
 fn main() -> std::process::ExitCode {
@@ -168,6 +185,13 @@ fn main() -> std::process::ExitCode {
                     }
                 };
             }
+            Cmd::Login {
+                url,
+                refresh_token,
+                no_save,
+            } => auth_client::run_login(&url, &refresh_token, !no_save),
+            Cmd::Logout => auth_client::run_logout(),
+            Cmd::Config => auth_client::run_config_show(),
         },
     };
 

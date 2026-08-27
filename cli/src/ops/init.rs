@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use owo_colors::OwoColorize;
 use std::fs;
 
-const HEADER: &str = "// managed by caddedit — site blocks live in vhosts/enabled/*.caddy";
+const HEADER: &str = "# managed by caddedit — site blocks live in vhosts/enabled/*.caddy";
 
 pub fn run(paths: &Paths, force: bool, no_reload: bool) -> Result<()> {
     if !paths.caddyfile.exists() {
@@ -103,13 +103,41 @@ pub fn run(paths: &Paths, force: bool, no_reload: bool) -> Result<()> {
     fsutil::atomic_write(&tmp, &out)?;
     if caddy::caddy_available() {
         if let Err(e) = caddy::validate_file(&tmp) {
-            eprintln!("{}", "validation failed — rolling back:".red().bold());
-            eprintln!("{}", format!("{e:#}").red());
-            for file in &created {
-                let _ = fs::remove_file(file);
+            // Try syntactic adapt as fallback; if that also fails due to missing plugins / raw directives, warn and continue.
+            let adapt_err = caddy::adapt_file(&tmp).err();
+            let should_warn = adapt_err
+                .as_ref()
+                .map(|ae| {
+                    let s = ae.to_string();
+                    s.contains("module not registered") || s.contains("unrecognized directive")
+                })
+                .unwrap_or(false)
+                || {
+                    let s = e.to_string();
+                    s.contains("module not registered") || s.contains("unrecognized directive")
+                };
+            if should_warn {
+                let detail = adapt_err
+                    .map(|ae| ae.to_string())
+                    .unwrap_or_else(|| e.to_string());
+                let first_line = detail.lines().next().unwrap_or(&detail);
+                eprintln!(
+                    "{}",
+                    format!(
+                        "warning: caddy validation failed ({}), but proceeding — raw/unknown directives or missing plugins (ensure target server has required modules)",
+                        first_line
+                    )
+                    .yellow()
+                );
+            } else {
+                eprintln!("{}", "validation failed — rolling back:".red().bold());
+                eprintln!("{}", format!("{e:#}").red());
+                for file in &created {
+                    let _ = fs::remove_file(file);
+                }
+                let _ = fs::remove_file(&tmp);
+                bail!("{} left untouched", paths.caddyfile.display());
             }
-            let _ = fs::remove_file(&tmp);
-            bail!("{} left untouched", paths.caddyfile.display());
         }
     } else {
         println!(
