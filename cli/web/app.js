@@ -1225,7 +1225,8 @@ async function checkForUpdates(silent) {
       setUpdNotes(r);
       return;
     }
-    const latestLabel = r.latest === "nightly" ? "nightly" : `v${r.latest}`;
+    const isRnd = r.latest && r.latest.includes("_rnd");
+    const latestLabel = r.latest === "nightly" ? "nightly" : isRnd ? r.latest : `v${r.latest}`;
     setUpdText(
       `<b style="color:rgb(var(--mdui-color-primary))">${latestLabel} available</b> (installed: v${r.current})`
     );
@@ -1233,7 +1234,7 @@ async function checkForUpdates(silent) {
     const btn = $("#btn-upd-apply");
     btn.hidden = false;
     btn.loading = false;
-    btn.textContent = r.latest === "nightly" ? `Update to nightly` : `Update to v${r.latest}`;
+    btn.textContent = r.latest === "nightly" ? `Update to nightly` : isRnd ? `Update to ${r.latest}` : `Update to v${r.latest}`;
     btn.dataset.version = r.latest;
   } catch (e) {
     if (!silent) setUpdText(`check failed: ${e.message}`);

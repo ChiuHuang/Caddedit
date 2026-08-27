@@ -60,8 +60,9 @@ fn latest_stable_version() -> Result<String> {
     Ok(tag.trim_start_matches('v').to_string())
 }
 
-/// Latest nightly tag (expects a release with tag `nightly`).
+/// Latest nightly version as `x.x.x_rnd` where `x.x.x` is latest stable.
 pub fn latest_nightly_version() -> Result<String> {
+    // Verify nightly tag exists (rolling release)
     let json = curl(&[
         "-H",
         "Accept: application/vnd.github+json",
@@ -74,11 +75,12 @@ pub fn latest_nightly_version() -> Result<String> {
             return Err(anyhow!("no nightly release found (tag nightly)"));
         }
     }
-    let tag = v["tag_name"]
+    v["tag_name"]
         .as_str()
         .ok_or_else(|| anyhow!("nightly response missing tag_name"))?;
-    // nightly tag is literally "nightly" – keep as "nightly" (no v prefix)
-    Ok(tag.trim_start_matches('v').to_string())
+    // Use current stable version + _rnd as nightly version (x.x.x_rnd)
+    let stable = latest_stable_version()?;
+    Ok(format!("{}_rnd", stable))
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -160,24 +162,57 @@ pub fn compare_notes(base: &str, head: &str) -> Result<Option<String>> {
 }
 
 pub fn release_info_for(channel: &str) -> Result<ReleaseInfo> {
-    let url = if channel == "nightly" {
-        format!("https://api.github.com/repos/{REPO}/releases/tags/nightly")
-    } else {
-        format!("https://api.github.com/repos/{REPO}/releases/latest")
-    };
-    let json = curl(&["-H", "Accept: application/vnd.github+json", &url])?;
+    if channel == "nightly" {
+        let json = curl(&[
+            "-H",
+            "Accept: application/vnd.github+json",
+            &format!("https://api.github.com/repos/{REPO}/releases/tags/nightly"),
+        ])?;
+        let v: serde_json::Value =
+            serde_json::from_str(&json).context("parsing GitHub release response")?;
+        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+            if msg.contains("Not Found") {
+                return Err(anyhow!("no nightly release found (tag nightly)"));
+            }
+        }
+        let published_at = v
+            .get("published_at")
+            .and_then(|p| p.as_str())
+            .map(|s| s.to_string());
+        let body = v
+            .get("body")
+            .and_then(|b| b.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        // nightly version is stable + _rnd (e.g., 0.5.7_rnd)
+        let stable = latest_stable_version().unwrap_or_else(|_| "0.0.0".to_string());
+        let version = format!("{}_rnd", stable);
+        let notes = body.map(|b| {
+            if b.len() > 4000 {
+                format!(
+                    "{}…\n\n[Full notes](https://github.com/{REPO}/releases/tag/nightly)",
+                    &b[..4000]
+                )
+            } else {
+                b
+            }
+        });
+        return Ok(ReleaseInfo {
+            version,
+            notes,
+            published_at,
+        });
+    }
+    let json = curl(&[
+        "-H",
+        "Accept: application/vnd.github+json",
+        &format!("https://api.github.com/repos/{REPO}/releases/latest"),
+    ])?;
     let v: serde_json::Value =
         serde_json::from_str(&json).context("parsing GitHub release response")?;
     if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
         if msg.contains("Not Found") {
-            return Err(anyhow!(
-                "no {} release found",
-                if channel == "nightly" {
-                    "nightly (tag nightly)"
-                } else {
-                    "stable"
-                }
-            ));
+            return Err(anyhow!("no stable release found"));
         }
     }
     let tag = v["tag_name"]
@@ -194,18 +229,11 @@ pub fn release_info_for(channel: &str) -> Result<ReleaseInfo> {
         .get("published_at")
         .and_then(|p| p.as_str())
         .map(|s| s.to_string());
-    // truncate notes to avoid huge payload (GitHub release notes can be long)
     let notes = body.map(|b| {
         if b.len() > 4000 {
-            let tag_ref = if channel == "nightly" {
-                "nightly".to_string()
-            } else {
-                format!("v{tag}")
-            };
             format!(
-                "{}…\n\n[Full notes](https://github.com/{REPO}/releases/tag/{})",
-                &b[..4000],
-                tag_ref
+                "{}…\n\n[Full notes](https://github.com/{REPO}/releases/tag/v{tag})",
+                &b[..4000]
             )
         } else {
             b
@@ -219,6 +247,9 @@ pub fn release_info_for(channel: &str) -> Result<ReleaseInfo> {
 }
 
 fn version_tuple(v: &str) -> (u64, u64, u64) {
+    // strip _rnd and -nightly suffixes before parsing
+    let v = v.split('_').next().unwrap_or(v);
+    let v = v.split('-').next().unwrap_or(v);
     let mut it = v.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
     (
         it.next().unwrap_or(0),
@@ -234,7 +265,22 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 pub fn is_newer_for(latest: &str, current: &str, channel: &str) -> bool {
     if channel == "nightly" {
         if latest == "nightly" {
-            return true; // nightly rolling tag is always newer than a stable build
+            return true;
+        }
+        if latest.ends_with("_rnd") {
+            // x.x.x_rnd is newer than x.x.x stable, equal _rnd is not newer
+            let latest_base = latest.trim_end_matches("_rnd");
+            let current_base = current.trim_end_matches("_rnd");
+            if version_tuple(latest_base) > version_tuple(current_base) {
+                return true;
+            }
+            if version_tuple(latest_base) == version_tuple(current_base)
+                && latest.ends_with("_rnd")
+                && !current.ends_with("_rnd")
+            {
+                return true;
+            }
+            return false;
         }
         // handle "0.5.3-nightly" or "0.5.3-nightly.20260828"
         let base = latest.split('-').next().unwrap_or(latest);
@@ -262,7 +308,8 @@ echo "installed $(/usr/local/bin/caddedit --version)"
 pub fn install_version(version: &str) -> Result<String> {
     let target =
         asset_name().ok_or_else(|| anyhow!("auto-update not supported on this platform"))?;
-    let tag = if version == "nightly" || version.starts_with("nightly") {
+    let tag = if version == "nightly" || version.starts_with("nightly") || version.ends_with("_rnd")
+    {
         "nightly".to_string()
     } else {
         format!("v{version}")
