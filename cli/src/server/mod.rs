@@ -669,50 +669,116 @@ async fn update_check(Query(q): Query<UpdateQuery>) -> Response {
     let ch = channel.to_string();
     let current = env!("CARGO_PKG_VERSION").to_string();
     let result = tokio::task::spawn_blocking(move || {
-        let info = crate::selfupdate::release_info_for(&ch)?;
-        // try to get more useful notes via compare (commit list)
-        let base = format!("v{current}");
-        let head = if ch == "nightly" {
-            "nightly".to_string()
-        } else {
-            format!("v{}", info.version)
-        };
-        let mut notes = info.notes.clone();
-        let mut up_to_date = !crate::selfupdate::is_newer_for(&info.version, &current, &ch);
-        // For nightly, up_to_date should reflect whether nightly is actually ahead
-        if let Ok(Some(cmp)) = crate::selfupdate::compare_notes(&base, &head) {
-            if cmp.contains("Already ahead") {
-                if ch == "nightly" {
-                    up_to_date = true;
-                }
-                // keep cmp as notes only if original was generic
-                let is_generic = notes
+        if ch == "nightly" {
+            // nightly should also consider stable — if stable is newer than nightly, show stable
+            let stable_info = crate::selfupdate::release_info_for("stable").ok();
+            let nightly_info = crate::selfupdate::release_info_for("nightly").ok();
+            let stable_newer = stable_info
+                .as_ref()
+                .map(|i| crate::selfupdate::is_newer(&i.version, &current))
+                .unwrap_or(false);
+            let nightly_newer = nightly_info
+                .as_ref()
+                .map(|i| crate::selfupdate::is_newer_for(&i.version, &current, "nightly"))
+                .unwrap_or(false);
+            // pick the newest available: nightly if it is newer than both current and stable
+            let pick_nightly = nightly_newer
+                && stable_info
                     .as_ref()
-                    .map(|n| {
-                        let t = n.trim();
-                        t.starts_with("**Full Changelog**") && t.lines().count() <= 4
+                    .map(|s| {
+                        crate::selfupdate::is_newer_for(
+                            nightly_info.as_ref().unwrap().version.as_str(),
+                            &s.version,
+                            "nightly",
+                        )
                     })
                     .unwrap_or(true);
-                if is_generic {
-                    notes = Some(cmp);
-                }
+            let info = if pick_nightly {
+                nightly_info.unwrap()
+            } else if stable_newer {
+                stable_info.unwrap()
             } else {
-                // cmp has real commits — prefer it over a lone Full Changelog link
-                let is_generic = notes
-                    .as_ref()
-                    .map(|n| {
-                        let t = n.trim();
-                        t.starts_with("**Full Changelog**") && t.lines().count() <= 3
-                    })
-                    .unwrap_or(true);
-                if is_generic || notes.is_none() {
-                    notes = Some(cmp);
+                // up to date — return nightly info if exists, else stable
+                nightly_info
+                    .or(stable_info)
+                    .ok_or_else(|| anyhow::anyhow!("no release found"))?
+            };
+            let mut notes = info.notes.clone();
+            let mut up_to_date = if pick_nightly {
+                !crate::selfupdate::is_newer_for(&info.version, &current, "nightly")
+            } else {
+                !stable_newer
+            };
+            // try compare for better notes
+            let base = format!("v{current}");
+            let head = if pick_nightly {
+                "nightly".to_string()
+            } else {
+                format!("v{}", info.version)
+            };
+            if let Ok(Some(cmp)) = crate::selfupdate::compare_notes(&base, &head) {
+                if cmp.contains("Already ahead") {
+                    up_to_date = true;
+                    let is_generic = notes
+                        .as_ref()
+                        .map(|n| {
+                            let t = n.trim();
+                            t.starts_with("**Full Changelog**") && t.lines().count() <= 4
+                        })
+                        .unwrap_or(true);
+                    if is_generic {
+                        notes = Some(cmp);
+                    }
+                } else {
+                    let is_generic = notes
+                        .as_ref()
+                        .map(|n| {
+                            let t = n.trim();
+                            t.starts_with("**Full Changelog**") && t.lines().count() <= 3
+                        })
+                        .unwrap_or(true);
+                    if is_generic || notes.is_none() {
+                        notes = Some(cmp);
+                    }
+                    up_to_date = false;
                 }
-                // if compare shows commits, then there is an update
-                up_to_date = false;
             }
+            Ok::<_, anyhow::Error>((info, notes, up_to_date))
+        } else {
+            let info = crate::selfupdate::release_info_for(&ch)?;
+            let base = format!("v{current}");
+            let head = format!("v{}", info.version);
+            let mut notes = info.notes.clone();
+            let mut up_to_date = !crate::selfupdate::is_newer_for(&info.version, &current, &ch);
+            if let Ok(Some(cmp)) = crate::selfupdate::compare_notes(&base, &head) {
+                if cmp.contains("Already ahead") {
+                    up_to_date = true;
+                    let is_generic = notes
+                        .as_ref()
+                        .map(|n| {
+                            let t = n.trim();
+                            t.starts_with("**Full Changelog**") && t.lines().count() <= 4
+                        })
+                        .unwrap_or(true);
+                    if is_generic {
+                        notes = Some(cmp);
+                    }
+                } else {
+                    let is_generic = notes
+                        .as_ref()
+                        .map(|n| {
+                            let t = n.trim();
+                            t.starts_with("**Full Changelog**") && t.lines().count() <= 3
+                        })
+                        .unwrap_or(true);
+                    if is_generic || notes.is_none() {
+                        notes = Some(cmp);
+                    }
+                    up_to_date = false;
+                }
+            }
+            Ok::<_, anyhow::Error>((info, notes, up_to_date))
         }
-        Ok::<_, anyhow::Error>((info, notes, up_to_date))
     })
     .await;
     match result.unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string()))) {
