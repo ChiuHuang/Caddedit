@@ -88,6 +88,77 @@ pub struct ReleaseInfo {
     pub published_at: Option<String>,
 }
 
+/// Compare two refs (tags/branches) and return a markdown list of commits.
+/// e.g., base="v0.5.5", head="nightly" or "v0.5.6"
+pub fn compare_notes(base: &str, head: &str) -> Result<Option<String>> {
+    let url = format!("https://api.github.com/repos/{REPO}/compare/{base}...{head}");
+    let json = match curl(&["-H", "Accept: application/vnd.github+json", &url]) {
+        Ok(j) => j,
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("404") || msg.contains("Not Found") {
+                return Ok(None);
+            }
+            return Err(e);
+        }
+    };
+    let v: serde_json::Value = serde_json::from_str(&json).context("parsing compare response")?;
+    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+        if msg.contains("Not Found") {
+            return Ok(None);
+        }
+    }
+    let ahead_by = v.get("ahead_by").and_then(|n| n.as_u64()).unwrap_or(0);
+    let behind_by = v.get("behind_by").and_then(|n| n.as_u64()).unwrap_or(0);
+    if ahead_by == 0 {
+        // head is not ahead of base — no new commits
+        if behind_by > 0 {
+            return Ok(Some(format!(
+                "Already ahead of nightly by {behind_by} commit(s) — no update needed."
+            )));
+        }
+        return Ok(None);
+    }
+    let commits = v
+        .get("commits")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if commits.is_empty() {
+        return Ok(None);
+    }
+    let mut lines = Vec::new();
+    for c in commits.iter().take(12) {
+        let msg = c
+            .get("commit")
+            .and_then(|m| m.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("");
+        let first_line = msg.lines().next().unwrap_or("").trim();
+        if first_line.is_empty() {
+            continue;
+        }
+        let sha = c.get("sha").and_then(|s| s.as_str()).unwrap_or("");
+        let short = if sha.len() >= 7 { &sha[..7] } else { sha };
+        // skip merge commits noise
+        if first_line.starts_with("Merge ") {
+            continue;
+        }
+        lines.push(format!("- {first_line} ({short})"));
+    }
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    let mut out = lines.join("\n");
+    if commits.len() > 12 {
+        out.push_str(&format!("\n… and {} more commits", commits.len() - 12));
+    }
+    out.push_str(&format!(
+        "\n\n[Full diff](https://github.com/{REPO}/compare/{base}...{head})"
+    ));
+    Ok(Some(out))
+}
+
 pub fn release_info_for(channel: &str) -> Result<ReleaseInfo> {
     let url = if channel == "nightly" {
         format!("https://api.github.com/repos/{REPO}/releases/tags/nightly")

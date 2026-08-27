@@ -667,20 +667,62 @@ async fn update_check(Query(q): Query<UpdateQuery>) -> Response {
         .into_response();
     }
     let ch = channel.to_string();
-    let result =
-        tokio::task::spawn_blocking(move || crate::selfupdate::release_info_for(&ch)).await;
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        let info = crate::selfupdate::release_info_for(&ch)?;
+        // try to get more useful notes via compare (commit list)
+        let base = format!("v{current}");
+        let head = if ch == "nightly" {
+            "nightly".to_string()
+        } else {
+            format!("v{}", info.version)
+        };
+        let mut notes = info.notes.clone();
+        let mut up_to_date = !crate::selfupdate::is_newer_for(&info.version, &current, &ch);
+        // For nightly, up_to_date should reflect whether nightly is actually ahead
+        if let Ok(Some(cmp)) = crate::selfupdate::compare_notes(&base, &head) {
+            if cmp.contains("Already ahead") {
+                if ch == "nightly" {
+                    up_to_date = true;
+                }
+                // keep cmp as notes only if original was generic
+                let is_generic = notes
+                    .as_ref()
+                    .map(|n| {
+                        let t = n.trim();
+                        t.starts_with("**Full Changelog**") && t.lines().count() <= 4
+                    })
+                    .unwrap_or(true);
+                if is_generic {
+                    notes = Some(cmp);
+                }
+            } else {
+                // cmp has real commits — prefer it over a lone Full Changelog link
+                let is_generic = notes
+                    .as_ref()
+                    .map(|n| {
+                        let t = n.trim();
+                        t.starts_with("**Full Changelog**") && t.lines().count() <= 3
+                    })
+                    .unwrap_or(true);
+                if is_generic || notes.is_none() {
+                    notes = Some(cmp);
+                }
+                // if compare shows commits, then there is an update
+                up_to_date = false;
+            }
+        }
+        Ok::<_, anyhow::Error>((info, notes, up_to_date))
+    })
+    .await;
     match result.unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string()))) {
-        Ok(info) => Json(UpdateCheck {
+        Ok((info, notes, up_to_date)) => Json(UpdateCheck {
             current: env!("CARGO_PKG_VERSION"),
-            up_to_date: !crate::selfupdate::is_newer_for(
-                &info.version,
-                env!("CARGO_PKG_VERSION"),
-                channel,
-            ),
+            up_to_date,
             latest: Some(info.version.clone()),
             supported: true,
             error: None,
-            notes: info.notes,
+            notes,
             published_at: info.published_at,
             channel: channel.to_string(),
         })
