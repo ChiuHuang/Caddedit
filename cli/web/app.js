@@ -17,13 +17,69 @@ function toast(msg, action) {
   mdui.snackbar({ message: msg, placement: "bottom", timeout: 4000, ...action });
 }
 
+const PW_KEY = "caddedit-password";
+function getStoredPassword() {
+  try {
+    return localStorage.getItem(PW_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+function setStoredPassword(pw) {
+  try {
+    localStorage.setItem(PW_KEY, pw);
+  } catch {}
+}
+function clearStoredPassword() {
+  try {
+    localStorage.removeItem(PW_KEY);
+  } catch {}
+}
+let autoLoginInFlight = null;
+async function tryAutoLogin() {
+  const pw = getStoredPassword();
+  if (!pw) return false;
+  if (autoLoginInFlight) return autoLoginInFlight;
+  autoLoginInFlight = (async () => {
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (res.ok) return true;
+      clearStoredPassword();
+      return false;
+    } catch {
+      return false;
+    } finally {
+      autoLoginInFlight = null;
+    }
+  })();
+  return autoLoginInFlight;
+}
+
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  let res = await fetch(path, {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     ...opts,
   });
   if (res.status === 401 && path !== "/api/login") {
+    const ok = await tryAutoLogin();
+    if (ok) {
+      res = await fetch(path, {
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        ...opts,
+      });
+      if (res.status !== 401) {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw Object.assign(new Error(body.error || res.statusText), { body });
+        return body;
+      }
+    }
     openLogin();
     throw new Error("locked");
   }
@@ -151,6 +207,17 @@ async function loadStatus() {
   authRequired = st.auth_required;
   $("#config-path").textContent = st.config_path;
   if (st.auth_required && !st.authenticated) {
+    const ok = await tryAutoLogin();
+    if (ok) {
+      const st2 = await api("/api/status");
+      authRequired = st2.auth_required;
+      $("#config-path").textContent = st2.config_path;
+      if (!st2.authenticated) {
+        openLogin();
+        return false;
+      }
+      return true;
+    }
     openLogin();
     return false;
   }
@@ -162,6 +229,8 @@ async function loadStatus() {
 function openLogin() {
   $("#login-error").textContent = "";
   $("#dlg-login").open = true;
+  const pw = getStoredPassword();
+  if (pw) $("#login-password").value = pw;
   setTimeout(() => $("#login-password").focus(), 50);
 }
 
@@ -170,21 +239,28 @@ $("#login-password").addEventListener("keydown", (e) => {
   if (e.key === "Enter") doLogin();
 });
 async function doLogin() {
+  const pw = $("#login-password").value;
   try {
     await api("/api/login", {
       method: "POST",
-      body: JSON.stringify({ password: $("#login-password").value }),
+      body: JSON.stringify({ password: pw }),
     });
+    setStoredPassword(pw);
     $("#dlg-login").open = false;
     $("#login-password").value = "";
+    $("#login-error").textContent = "";
     await loadStatus();
     await loadAll();
   } catch (e) {
+    if (e.body && e.body.error && String(e.body.error).toLowerCase().includes("wrong")) {
+      clearStoredPassword();
+    }
     $("#login-error").textContent = e.message === "locked" ? "" : "wrong password";
   }
 }
 
 $("#btn-logout").addEventListener("click", async () => {
+  clearStoredPassword();
   await api("/api/logout", { method: "POST" }).catch(() => {});
   routes = [];
   render();
