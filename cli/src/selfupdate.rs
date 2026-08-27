@@ -32,7 +32,21 @@ fn curl(args: &[&str]) -> Result<String> {
 }
 
 /// Latest release tag without the leading `v`.
+#[allow(dead_code)]
 pub fn latest_version() -> Result<String> {
+    latest_version_for("stable")
+}
+
+/// Latest version for a channel: "stable" (latest) or "nightly" (tag nightly).
+pub fn latest_version_for(channel: &str) -> Result<String> {
+    if channel == "nightly" {
+        latest_nightly_version()
+    } else {
+        latest_stable_version()
+    }
+}
+
+fn latest_stable_version() -> Result<String> {
     let json = curl(&[
         "-H",
         "Accept: application/vnd.github+json",
@@ -43,6 +57,27 @@ pub fn latest_version() -> Result<String> {
     let tag = v["tag_name"]
         .as_str()
         .ok_or_else(|| anyhow!("release response missing tag_name"))?;
+    Ok(tag.trim_start_matches('v').to_string())
+}
+
+/// Latest nightly tag (expects a release with tag `nightly`).
+pub fn latest_nightly_version() -> Result<String> {
+    let json = curl(&[
+        "-H",
+        "Accept: application/vnd.github+json",
+        &format!("https://api.github.com/repos/{REPO}/releases/tags/nightly"),
+    ])?;
+    let v: serde_json::Value =
+        serde_json::from_str(&json).context("parsing GitHub nightly response")?;
+    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+        if msg.contains("Not Found") {
+            return Err(anyhow!("no nightly release found (tag nightly)"));
+        }
+    }
+    let tag = v["tag_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("nightly response missing tag_name"))?;
+    // nightly tag is literally "nightly" – keep as "nightly" (no v prefix)
     Ok(tag.trim_start_matches('v').to_string())
 }
 
@@ -59,10 +94,22 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     version_tuple(latest) > version_tuple(current)
 }
 
+pub fn is_newer_for(latest: &str, current: &str, channel: &str) -> bool {
+    if channel == "nightly" {
+        if latest == "nightly" {
+            return true; // nightly rolling tag is always newer than a stable build
+        }
+        // handle "0.5.3-nightly" or "0.5.3-nightly.20260828"
+        let base = latest.split('-').next().unwrap_or(latest);
+        return version_tuple(base) >= version_tuple(current);
+    }
+    is_newer(latest, current)
+}
+
 const INSTALL_SCRIPT: &str = r#"set -eu
 dir="$(mktemp -d)"
 cd "$dir"
-base="https://github.com/{repo}/releases/download/v{ver}"
+base="https://github.com/{repo}/releases/download/{tag}"
 asset="caddedit-{target}"
 curl -fsSL --max-time 120 "$base/$asset.tar.gz" -O
 expected="$(curl -fsSL --max-time 30 --retry 3 "$base/$asset.tar.gz.sha256" | awk '{print $1}')"
@@ -78,9 +125,14 @@ echo "installed $(/usr/local/bin/caddedit --version)"
 pub fn install_version(version: &str) -> Result<String> {
     let target =
         asset_name().ok_or_else(|| anyhow!("auto-update not supported on this platform"))?;
+    let tag = if version == "nightly" || version.starts_with("nightly") {
+        "nightly".to_string()
+    } else {
+        format!("v{version}")
+    };
     let script = INSTALL_SCRIPT
         .replace("{repo}", REPO)
-        .replace("{ver}", version)
+        .replace("{tag}", &tag)
         .replace("{target}", target);
     let out = std::process::Command::new("sh")
         .arg("-c")
@@ -160,5 +212,13 @@ mod tests {
         assert!(is_newer("1.0.0", "0.9.9"));
         assert!(!is_newer("0.3.0", "0.3.0"));
         assert!(!is_newer("0.2.9", "0.3.0"));
+    }
+
+    #[test]
+    fn nightly_is_newer() {
+        assert!(is_newer_for("nightly", "0.5.3", "nightly"));
+        assert!(is_newer_for("0.5.3-nightly", "0.5.3", "nightly"));
+        assert!(is_newer_for("0.5.4-nightly", "0.5.3", "nightly"));
+        assert!(!is_newer_for("0.5.3", "0.5.3", "stable"));
     }
 }

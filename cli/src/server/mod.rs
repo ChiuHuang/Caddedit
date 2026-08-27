@@ -641,7 +641,13 @@ struct UpdateCheck {
     error: Option<String>,
 }
 
-async fn update_check() -> Response {
+#[derive(Deserialize)]
+struct UpdateQuery {
+    channel: Option<String>,
+}
+
+async fn update_check(Query(q): Query<UpdateQuery>) -> Response {
+    let channel = q.channel.as_deref().unwrap_or("stable");
     let supported = crate::selfupdate::asset_name().is_some();
     if !supported {
         return Json(UpdateCheck {
@@ -653,11 +659,17 @@ async fn update_check() -> Response {
         })
         .into_response();
     }
-    let result = tokio::task::spawn_blocking(crate::selfupdate::latest_version).await;
+    let ch = channel.to_string();
+    let result =
+        tokio::task::spawn_blocking(move || crate::selfupdate::latest_version_for(&ch)).await;
     match result.unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string()))) {
         Ok(latest) => Json(UpdateCheck {
             current: env!("CARGO_PKG_VERSION"),
-            up_to_date: !crate::selfupdate::is_newer(&latest, env!("CARGO_PKG_VERSION")),
+            up_to_date: !crate::selfupdate::is_newer_for(
+                &latest,
+                env!("CARGO_PKG_VERSION"),
+                channel,
+            ),
             latest: Some(latest),
             supported: true,
             error: None,
@@ -679,7 +691,8 @@ async fn update_status(State(st): State<SharedState>) -> Response {
     Json(u).into_response()
 }
 
-async fn update_apply(State(st): State<SharedState>) -> Response {
+async fn update_apply(State(st): State<SharedState>, Query(q): Query<UpdateQuery>) -> Response {
+    let channel = q.channel.unwrap_or_else(|| "stable".to_string());
     {
         let mut u = st.update.lock().unwrap_or_else(|p| p.into_inner());
         if u.running {
@@ -687,7 +700,7 @@ async fn update_apply(State(st): State<SharedState>) -> Response {
         }
         u.running = true;
         u.stage = "checking".into();
-        u.message = "checking GitHub releases".into();
+        u.message = format!("checking GitHub releases ({channel})");
         u.target = None;
         u.started_at = now_ms();
     }
@@ -701,16 +714,26 @@ async fn update_apply(State(st): State<SharedState>) -> Response {
             }
         };
         let result: anyhow::Result<String> = async {
-            let latest = tokio::task::spawn_blocking(crate::selfupdate::latest_version)
-                .await
-                .map_err(|e| anyhow::anyhow!(e.to_string()))??;
-            if !crate::selfupdate::is_newer(&latest, env!("CARGO_PKG_VERSION")) {
-                return Ok(format!("already on v{}", env!("CARGO_PKG_VERSION")));
+            let ch = channel.clone();
+            let latest =
+                tokio::task::spawn_blocking(move || crate::selfupdate::latest_version_for(&ch))
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))??;
+            if !crate::selfupdate::is_newer_for(&latest, env!("CARGO_PKG_VERSION"), &channel) {
+                return Ok(format!(
+                    "already on v{} (channel {channel})",
+                    env!("CARGO_PKG_VERSION")
+                ));
             }
             if let Ok(mut u) = worker.update.lock() {
                 u.target = Some(latest.clone());
             }
-            set("downloading", &format!("downloading v{latest}"));
+            let display = if channel == "nightly" {
+                format!("downloading nightly {latest}")
+            } else {
+                format!("downloading v{latest}")
+            };
+            set("downloading", &display);
             let install =
                 tokio::task::spawn_blocking(move || crate::selfupdate::install_version(&latest))
                     .await

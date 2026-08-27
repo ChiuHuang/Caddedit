@@ -1167,10 +1167,14 @@ async function pollUpdateStatus() {
   }
 }
 
+function updChannel() {
+  return $("#upd-nightly") && $("#upd-nightly").checked ? "nightly" : "stable";
+}
+
 async function checkForUpdates(silent) {
   if (!silent) setUpdText("checking...");
   try {
-    const r = await api("/api/update/check");
+    const r = await api("/api/update/check?channel=" + updChannel());
     document.querySelectorAll(".cur-version").forEach((el) => (el.textContent = r.current));
     if (!r.supported) {
       setUpdText(`v${r.current} — auto-update unsupported here`);
@@ -1185,13 +1189,14 @@ async function checkForUpdates(silent) {
       $("#btn-upd-apply").hidden = true;
       return;
     }
+    const latestLabel = r.latest === "nightly" ? "nightly" : `v${r.latest}`;
     setUpdText(
-      `<b style="color:rgb(var(--mdui-color-primary))">v${r.latest} available</b> (installed: v${r.current})`
+      `<b style="color:rgb(var(--mdui-color-primary))">${latestLabel} available</b> (installed: v${r.current})`
     );
     const btn = $("#btn-upd-apply");
     btn.hidden = false;
     btn.loading = false;
-    btn.textContent = `Update to v${r.latest}`;
+    btn.textContent = r.latest === "nightly" ? `Update to nightly` : `Update to v${r.latest}`;
     btn.dataset.version = r.latest;
   } catch (e) {
     if (!silent) setUpdText(`check failed: ${e.message}`);
@@ -1200,13 +1205,25 @@ async function checkForUpdates(silent) {
 
 $("#btn-upd-check").addEventListener("click", () => checkForUpdates(false));
 
+(function initUpdChannel() {
+  const cb = $("#upd-nightly");
+  if (!cb) return;
+  const saved = localStorage.getItem("caddedit-update-channel");
+  if (saved === "nightly") cb.checked = true;
+  cb.addEventListener("change", () => {
+    localStorage.setItem("caddedit-update-channel", updChannel());
+    checkForUpdates(false);
+  });
+})();
+
 $("#btn-upd-apply").addEventListener("click", async () => {
   const btn = $("#btn-upd-apply");
   const target = btn.dataset.version;
   btn.hidden = true;
-  setUpdText(`starting update to v${target}…`);
+  const ch = updChannel();
+  setUpdText(`starting update to ${ch === "nightly" ? "nightly " : "v"}${target}…`);
   try {
-    await api("/api/update", { method: "POST" });
+    await api("/api/update?channel=" + ch, { method: "POST" });
   } catch (e) {
     setUpdText(`update failed: ${e.body?.error || e.message}`);
     return;

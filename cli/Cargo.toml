@@ -1,6 +1,6 @@
 [package]
 name = "caddedit-cli"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
 description = "Split, inspect and toggle Caddy site blocks without pain"
 license = "MIT"
