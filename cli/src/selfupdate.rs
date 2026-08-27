@@ -81,6 +81,72 @@ pub fn latest_nightly_version() -> Result<String> {
     Ok(tag.trim_start_matches('v').to_string())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ReleaseInfo {
+    pub version: String,
+    pub notes: Option<String>,
+    pub published_at: Option<String>,
+}
+
+pub fn release_info_for(channel: &str) -> Result<ReleaseInfo> {
+    let url = if channel == "nightly" {
+        format!("https://api.github.com/repos/{REPO}/releases/tags/nightly")
+    } else {
+        format!("https://api.github.com/repos/{REPO}/releases/latest")
+    };
+    let json = curl(&["-H", "Accept: application/vnd.github+json", &url])?;
+    let v: serde_json::Value =
+        serde_json::from_str(&json).context("parsing GitHub release response")?;
+    if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+        if msg.contains("Not Found") {
+            return Err(anyhow!(
+                "no {} release found",
+                if channel == "nightly" {
+                    "nightly (tag nightly)"
+                } else {
+                    "stable"
+                }
+            ));
+        }
+    }
+    let tag = v["tag_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("release response missing tag_name"))?
+        .trim_start_matches('v')
+        .to_string();
+    let body = v
+        .get("body")
+        .and_then(|b| b.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let published_at = v
+        .get("published_at")
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string());
+    // truncate notes to avoid huge payload (GitHub release notes can be long)
+    let notes = body.map(|b| {
+        if b.len() > 4000 {
+            let tag_ref = if channel == "nightly" {
+                "nightly".to_string()
+            } else {
+                format!("v{tag}")
+            };
+            format!(
+                "{}…\n\n[Full notes](https://github.com/{REPO}/releases/tag/{})",
+                &b[..4000],
+                tag_ref
+            )
+        } else {
+            b
+        }
+    });
+    Ok(ReleaseInfo {
+        version: tag,
+        notes,
+        published_at,
+    })
+}
+
 fn version_tuple(v: &str) -> (u64, u64, u64) {
     let mut it = v.split('.').map(|p| p.parse::<u64>().unwrap_or(0));
     (

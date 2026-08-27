@@ -639,6 +639,10 @@ struct UpdateCheck {
     up_to_date: bool,
     supported: bool,
     error: Option<String>,
+    /// markdown release notes (truncated)
+    notes: Option<String>,
+    published_at: Option<String>,
+    channel: String,
 }
 
 #[derive(Deserialize)]
@@ -656,23 +660,29 @@ async fn update_check(Query(q): Query<UpdateQuery>) -> Response {
             up_to_date: true,
             supported: false,
             error: Some("auto-update unsupported on this platform".into()),
+            notes: None,
+            published_at: None,
+            channel: channel.to_string(),
         })
         .into_response();
     }
     let ch = channel.to_string();
     let result =
-        tokio::task::spawn_blocking(move || crate::selfupdate::latest_version_for(&ch)).await;
+        tokio::task::spawn_blocking(move || crate::selfupdate::release_info_for(&ch)).await;
     match result.unwrap_or_else(|e| Err(anyhow::anyhow!(e.to_string()))) {
-        Ok(latest) => Json(UpdateCheck {
+        Ok(info) => Json(UpdateCheck {
             current: env!("CARGO_PKG_VERSION"),
             up_to_date: !crate::selfupdate::is_newer_for(
-                &latest,
+                &info.version,
                 env!("CARGO_PKG_VERSION"),
                 channel,
             ),
-            latest: Some(latest),
+            latest: Some(info.version.clone()),
             supported: true,
             error: None,
+            notes: info.notes,
+            published_at: info.published_at,
+            channel: channel.to_string(),
         })
         .into_response(),
         Err(e) => Json(UpdateCheck {
@@ -681,6 +691,9 @@ async fn update_check(Query(q): Query<UpdateQuery>) -> Response {
             up_to_date: false,
             supported: true,
             error: Some(e.to_string()),
+            notes: None,
+            published_at: None,
+            channel: channel.to_string(),
         })
         .into_response(),
     }

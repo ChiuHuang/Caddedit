@@ -1171,28 +1171,65 @@ function updChannel() {
   return $("#upd-nightly") && $("#upd-nightly").checked ? "nightly" : "stable";
 }
 
+function md2html(md) {
+  return md
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/^### (.*)$/gm, "<b>$1</b>")
+    .replace(/^## (.*)$/gm, "<b>$1</b>")
+    .replace(/\*\*(.*?)\*\*/g, "<b>$1</b>")
+    .replace(/`([^`]+)`/g, '<code style="background:rgb(var(--mdui-color-surface-container-high));padding:0 4px;border-radius:4px;">$1</code>')
+    .replace(/\n/g, "<br>");
+}
+
+function setUpdNotes(r) {
+  const el = $("#upd-notes");
+  if (!el) return;
+  if (r && r.notes) {
+    let txt = r.notes;
+    if (r.published_at) {
+      try {
+        const d = new Date(r.published_at);
+        txt += `\n\n— ${r.channel} ${r.latest} · ${d.toLocaleString()}`;
+      } catch {}
+    }
+    el.innerHTML = md2html(txt);
+    el.style.display = "block";
+  } else {
+    el.textContent = "";
+    el.style.display = "none";
+  }
+}
+
 async function checkForUpdates(silent) {
-  if (!silent) setUpdText("checking...");
+  if (!silent) {
+    setUpdText("checking...");
+    const n = $("#upd-notes");
+    if (n) { n.textContent = ""; n.style.display = "none"; }
+  }
   try {
     const r = await api("/api/update/check?channel=" + updChannel());
     document.querySelectorAll(".cur-version").forEach((el) => (el.textContent = r.current));
     if (!r.supported) {
       setUpdText(`v${r.current} — auto-update unsupported here`);
+      setUpdNotes(r);
       return;
     }
     if (r.error) {
       setUpdText(`v${r.current} — check failed: ${r.error}`);
+      setUpdNotes(r);
       return;
     }
     if (r.up_to_date) {
       setUpdText(`v${r.current} — up to date`);
       $("#btn-upd-apply").hidden = true;
+      setUpdNotes(r);
       return;
     }
     const latestLabel = r.latest === "nightly" ? "nightly" : `v${r.latest}`;
     setUpdText(
       `<b style="color:rgb(var(--mdui-color-primary))">${latestLabel} available</b> (installed: v${r.current})`
     );
+    setUpdNotes(r);
     const btn = $("#btn-upd-apply");
     btn.hidden = false;
     btn.loading = false;
