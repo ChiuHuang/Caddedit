@@ -515,6 +515,10 @@
             hidden
             style="margin-bottom: 0.75rem"
           ></mdui-linear-progress>
+          <mdui-checkbox id="upd-nightly">Nightly channel</mdui-checkbox>
+          <div style="font-size: 0.75rem; opacity: 0.6; margin-top: 0.25rem">
+            Daily builds from main — less stable, auto-updatable.
+          </div>
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
             <mdui-button id="btn-upd-check" variant="outlined"
               >Check for updates</mdui-button
@@ -600,11 +604,6 @@
             class="parsed-row"
             style="opacity: 0.65; margin-top: 0.5rem"
           ></div>
-
-          <mdui-checkbox id="upd-nightly">Nightly channel</mdui-checkbox>
-          <div style="font-size: 0.75rem; opacity: 0.6; margin-top: 0.25rem">
-            Daily builds from main — less stable, auto-updatable.
-          </div>
         </div>
       </div>
       <mdui-button slot="action" variant="filled" id="settings-done"
