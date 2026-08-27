@@ -51,7 +51,8 @@ curl -sSL https://raw.githubusercontent.com/ChiuHuang/Caddedit/main/install.sh |
 or with Rust:
 
 ```bash
-cargo install --git https://github.com/ChiuHuang/Caddedit --path cli
+git clone https://github.com/ChiuHuang/Caddedit
+cargo install --path Caddedit/cli
 ```
 
 ## Commands

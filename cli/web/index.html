@@ -1,281 +1,729 @@
 <!doctype html>
 <html lang="en" class="mdui-theme-dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Caddedit</title>
-<link rel="stylesheet" href="/vendor/mdui/mdui.css">
-<style>
-  :root { color-scheme: dark light; }
-  html {
-    scrollbar-width: thin;
-    scrollbar-color: rgb(var(--mdui-color-outline-variant)) transparent;
-  }
-  ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb {
-    background: rgb(var(--mdui-color-outline-variant));
-    border-radius: 999px;
-  }
-  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--mdui-color-outline)); }
-  ::-webkit-scrollbar-corner { background: transparent; }
-  body { margin: 0; background: rgb(var(--mdui-color-background)); }
-  main { max-width: 60rem; margin: 0 auto; padding: 1rem 1rem 6rem; }
-  .mono { font-family: Consolas, "Cascadia Mono", monospace; }
-  .route-card {
-    display: flex; align-items: center; gap: 1rem;
-    background: rgb(var(--mdui-color-surface-container));
-    border-radius: var(--mdui-shape-corner-large);
-    padding: 0.75rem 1rem; margin-bottom: 0.75rem;
-  }
-  .route-main { flex: 1; min-width: 0; }
-  .route-domains { font-weight: 600; overflow-wrap: anywhere; }
-  .route-meta { color: rgb(var(--mdui-color-on-surface-variant)); font-size: 0.85rem; margin-top: 0.15rem; }
-  .route-actions { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
-  #toolbar { display: flex; gap: 0.25rem; align-items: center; }
-  #empty { text-align: center; color: rgb(var(--mdui-color-on-surface-variant)); padding: 4rem 0; }
-  .editor-field textarea { min-height: 44vh; }
-  .form-grid {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem; align-items: start; margin-top: 0.75rem;
-  }
-  #pe-tls-raw-wrap textarea { min-height: 0; }
-  mdui-tabs { margin-top: 0.5rem; }
-  mdui-button[hidden], mdui-linear-progress[hidden] { display: none !important; }
-  .pe-other {
-    background: rgb(var(--mdui-color-surface-container));
-    border-radius: var(--mdui-shape-corner-medium);
-    padding: 0.75rem 1rem; margin-top: 0.5rem;
-    font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere;
-    max-height: 10rem; overflow: auto;
-  }
-  .dir-row { display: flex; gap: 0.5rem; align-items: flex-start; margin-bottom: 0.5rem; }
-  .dir-row mdui-select { width: 12rem; flex-shrink: 0; }
-  .dir-row mdui-text-field { flex: 1; }
-  .dir-row mdui-button-icon { flex-shrink: 0; margin-top: 0.25rem; }
-  .plugin-card {
-    background: rgb(var(--mdui-color-surface-container));
-    border-radius: var(--mdui-shape-corner-medium);
-    padding: 1rem;
-  }
-  .plugin-entry { display: flex; align-items: center; gap: 0.75rem; }
-  .plugin-entry .url { flex: 1; font-size: 0.8rem; overflow-wrap: anywhere; }
-  .parsed-row { margin-bottom: 0.65rem; font-size: 0.85rem; line-height: 1.45; }
-  .parsed-row b { display: block; opacity: 0.6; font-weight: 500; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
-  .chip {
-    display: inline-block; padding: 0.1rem 0.6rem; border-radius: 999px;
-    background: rgb(var(--mdui-color-secondary-container));
-    color: rgb(var(--mdui-color-on-secondary-container));
-    font-size: 0.75rem;
-  }
-  .swatch {
-    width: 2rem; height: 2rem; border-radius: 50%; cursor: pointer;
-    border: 2px solid transparent; outline: none; padding: 0;
-  }
-  .swatch.active { border-color: rgb(var(--mdui-color-on-surface)); }
-</style>
-</head>
-<body>
-
-<mdui-top-app-bar variant="fixed">
-  <mdui-top-app-bar-title style="display:flex;align-items:center;gap:.5rem;">
-    Caddedit
-    <span id="config-path" class="mono" style="font-size:.75rem;color:rgb(var(--mdui-color-on-surface-variant));"></span>
-  </mdui-top-app-bar-title>
-  <div id="toolbar">
-    <mdui-button variant="text" id="btn-refresh">Refresh</mdui-button>
-    <mdui-button variant="text" id="btn-reload">Reload Caddy</mdui-button>
-    <mdui-tooltip content="Quick theme switch">
-      <mdui-button-icon id="btn-theme"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 1 0 0-2H2a1 1 0 1 0 0 2zm18 0h2a1 1 0 1 0 0-2h-2a1 1 0 1 0 0 2zM11 2v2a1 1 0 1 0 2 0V2a1 1 0 1 0-2 0zm0 18v2a1 1 0 1 0 2 0v-2a1 1 0 1 0-2 0zM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 1 0 1.41-1.41L5.99 4.58zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 1 0 1.41-1.41l-1.06-1.06zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 1 0 1.41 1.41l1.06-1.06zM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 1 0 1.41 1.41l1.06-1.06z"/></svg></mdui-button-icon>
-    </mdui-tooltip>
-    <mdui-tooltip content="Settings">
-      <mdui-button-icon id="btn-settings"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg></mdui-button-icon>
-    </mdui-tooltip>
-    <mdui-tooltip content="Plugins">
-      <mdui-button-icon id="btn-plugins"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V19c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V21H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg></mdui-button-icon>
-    </mdui-tooltip>
-    <mdui-tooltip content="Logout">
-      <mdui-button-icon id="btn-logout"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 8l-1.41 1.41L17.17 11H9v2h8.17l-1.58 1.59L17 16l4-4zM5 5h6V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6v-2H5V5z"/></svg></mdui-button-icon>
-    </mdui-tooltip>
-  </div>
-</mdui-top-app-bar>
-
-<main>
-  <mdui-text-field id="search" name="search" variant="outlined" placeholder="Search domain, upstream, tls…" clearable
-    autocomplete="off" spellcheck="false" style="margin-bottom:1rem;"></mdui-text-field>
-  <div id="routes"></div>
-  <div id="empty" hidden>No routes yet.</div>
-</main>
-
-<mdui-fab id="fab-new" icon="add" style="position:fixed;right:1.5rem;bottom:1.5rem;">
-  <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" slot="icon"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-</mdui-fab>
-
-<!-- edit dialog: parsed GUI form + raw source, tabbed -->
-<mdui-dialog id="dlg-edit" class="editor-dialog" close-on-overlay-click style="--dialog-max-width:64rem;width:64rem;">
-  <span slot="headline">Edit <span id="edit-id" class="mono"></span></span>
-  <mdui-tabs id="edit-tabs" value="parsed" full-width>
-    <mdui-tab value="parsed">Parsed</mdui-tab>
-    <mdui-tab value="raw">Raw</mdui-tab>
-  </mdui-tabs>
-  <div id="edit-parsed-pane" style="margin-top:1rem;">
-    <div id="parsed-summary"></div>
-    <div class="form-grid">
-      <mdui-text-field id="pe-domains" name="domains" label="Domains (comma separated)" variant="outlined"
-        autocomplete="off" spellcheck="false"></mdui-text-field>
-      <mdui-text-field id="pe-upstream" name="upstream" label="Upstream (simple reverse_proxy target)" placeholder="localhost:3000"
-        variant="outlined" autocomplete="off" spellcheck="false"></mdui-text-field>
-      <mdui-select id="pe-tls" variant="outlined" label="TLS">
-        <mdui-menu-item value="none">none (HTTP only)</mdui-menu-item>
-        <mdui-menu-item value="internal">tls internal</mdui-menu-item>
-        <mdui-menu-item value="acme">ACME email (Let's Encrypt)</mdui-menu-item>
-        <mdui-menu-item value="cloudflare">Cloudflare DNS challenge</mdui-menu-item>
-        <mdui-menu-item value="manual">cert + key files</mdui-menu-item>
-        <mdui-menu-item value="custom">custom (raw)</mdui-menu-item>
-      </mdui-select>
-      <mdui-checkbox id="pe-watch-log" style="align-self:end;padding-bottom:.75rem;">import request_watch_log</mdui-checkbox>
-      <div id="pe-tls-detail-wrap" hidden>
-        <mdui-text-field id="pe-tls-detail" name="tls-detail" label="ACME email" variant="outlined"
-          autocomplete="off" spellcheck="false"></mdui-text-field>
-      </div>
-      <div id="pe-tls-raw-wrap" hidden style="grid-column:1/-1;">
-        <mdui-text-field id="pe-tls-raw" name="tls-raw" class="mono" label="Raw TLS block" variant="outlined"
-          autosize min-rows="3" max-rows="10" autocomplete="off" spellcheck="false"></mdui-text-field>
-      </div>
-    </div>
-    <div id="pe-directives-wrap" hidden style="margin-top:1rem;">
-      <div style="display:flex;align-items:center;gap:.25rem;">
-        <b style="font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;opacity:.6;">Directives</b>
-        <span style="font-size:.75rem;opacity:.55;">complex blocks stay raw — Raw tab recommended for heavy edits</span>
-        <span style="flex:1;"></span>
-        <mdui-tooltip content="Add directive">
-          <mdui-button-icon id="pe-add-dir"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg></mdui-button-icon>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Caddedit</title>
+    <link rel="stylesheet" href="/vendor/mdui/mdui.css" />
+    <style>
+      :root {
+        color-scheme: dark light;
+      }
+      html {
+        scrollbar-width: thin;
+        scrollbar-color: rgb(var(--mdui-color-outline-variant)) transparent;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgb(var(--mdui-color-outline-variant));
+        border-radius: 999px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgb(var(--mdui-color-outline));
+      }
+      ::-webkit-scrollbar-corner {
+        background: transparent;
+      }
+      body {
+        margin: 0;
+        background: rgb(var(--mdui-color-background));
+      }
+      main {
+        max-width: 60rem;
+        margin: 0 auto;
+        padding: 1rem 1rem 6rem;
+      }
+      .mono {
+        font-family: Consolas, "Cascadia Mono", monospace;
+      }
+      .route-card {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        background: rgb(var(--mdui-color-surface-container));
+        border-radius: var(--mdui-shape-corner-large);
+        padding: 0.75rem 1rem;
+        margin-bottom: 0.75rem;
+      }
+      .route-main {
+        flex: 1;
+        min-width: 0;
+      }
+      .route-domains {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      .route-meta {
+        color: rgb(var(--mdui-color-on-surface-variant));
+        font-size: 0.85rem;
+        margin-top: 0.15rem;
+      }
+      .route-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        flex-shrink: 0;
+      }
+      #toolbar {
+        display: flex;
+        gap: 0.25rem;
+        align-items: center;
+      }
+      #empty {
+        text-align: center;
+        color: rgb(var(--mdui-color-on-surface-variant));
+        padding: 4rem 0;
+      }
+      .editor-field textarea {
+        min-height: 44vh;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        align-items: start;
+        margin-top: 0.75rem;
+      }
+      #pe-tls-raw-wrap textarea {
+        min-height: 0;
+      }
+      mdui-tabs {
+        margin-top: 0.5rem;
+      }
+      mdui-button[hidden],
+      mdui-linear-progress[hidden] {
+        display: none !important;
+      }
+      .pe-other {
+        background: rgb(var(--mdui-color-surface-container));
+        border-radius: var(--mdui-shape-corner-medium);
+        padding: 0.75rem 1rem;
+        margin-top: 0.5rem;
+        font-size: 0.8rem;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 10rem;
+        overflow: auto;
+      }
+      .dir-row {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+        margin-bottom: 0.5rem;
+      }
+      .dir-row mdui-select {
+        width: 12rem;
+        flex-shrink: 0;
+      }
+      .dir-row mdui-text-field {
+        flex: 1;
+      }
+      .dir-row mdui-button-icon {
+        flex-shrink: 0;
+        margin-top: 0.25rem;
+      }
+      .plugin-card {
+        background: rgb(var(--mdui-color-surface-container));
+        border-radius: var(--mdui-shape-corner-medium);
+        padding: 1rem;
+      }
+      .plugin-entry {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .plugin-entry .url {
+        flex: 1;
+        font-size: 0.8rem;
+        overflow-wrap: anywhere;
+      }
+      .parsed-row {
+        margin-bottom: 0.65rem;
+        font-size: 0.85rem;
+        line-height: 1.45;
+      }
+      .parsed-row b {
+        display: block;
+        opacity: 0.6;
+        font-weight: 500;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .chip {
+        display: inline-block;
+        padding: 0.1rem 0.6rem;
+        border-radius: 999px;
+        background: rgb(var(--mdui-color-secondary-container));
+        color: rgb(var(--mdui-color-on-secondary-container));
+        font-size: 0.75rem;
+      }
+      .swatch {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 50%;
+        cursor: pointer;
+        border: 2px solid transparent;
+        outline: none;
+        padding: 0;
+      }
+      .swatch.active {
+        border-color: rgb(var(--mdui-color-on-surface));
+      }
+    </style>
+  </head>
+  <body>
+    <mdui-top-app-bar variant="fixed">
+      <mdui-top-app-bar-title
+        style="display: flex; align-items: center; gap: 0.5rem"
+      >
+        Caddedit
+        <span
+          id="config-path"
+          class="mono"
+          style="
+            font-size: 0.75rem;
+            color: rgb(var(--mdui-color-on-surface-variant));
+          "
+        ></span>
+      </mdui-top-app-bar-title>
+      <div id="toolbar">
+        <mdui-button variant="text" id="btn-refresh">Refresh</mdui-button>
+        <mdui-button variant="text" id="btn-reload">Reload Caddy</mdui-button>
+        <mdui-tooltip content="Quick theme switch">
+          <mdui-button-icon id="btn-theme"
+            ><svg
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="currentColor"
+            >
+              <path
+                d="M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM2 13h2a1 1 0 1 0 0-2H2a1 1 0 1 0 0 2zm18 0h2a1 1 0 1 0 0-2h-2a1 1 0 1 0 0 2zM11 2v2a1 1 0 1 0 2 0V2a1 1 0 1 0-2 0zm0 18v2a1 1 0 1 0 2 0v-2a1 1 0 1 0-2 0zM5.99 4.58a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 1 0 1.41-1.41L5.99 4.58zm12.37 12.37a1 1 0 0 0-1.41 1.41l1.06 1.06a1 1 0 1 0 1.41-1.41l-1.06-1.06zm1.06-10.96a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 1 0 1.41 1.41l1.06-1.06zM7.05 18.36a1 1 0 0 0-1.41-1.41l-1.06 1.06a1 1 0 1 0 1.41 1.41l1.06-1.06z"
+              /></svg
+          ></mdui-button-icon>
         </mdui-tooltip>
-        <mdui-tooltip content="Edit raw Caddyfile">
-          <mdui-button-icon id="pe-goto-raw"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6z"/></svg></mdui-button-icon>
+        <mdui-tooltip content="Settings">
+          <mdui-button-icon id="btn-settings"
+            ><svg
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="currentColor"
+            >
+              <path
+                d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"
+              /></svg
+          ></mdui-button-icon>
         </mdui-tooltip>
-        <mdui-tooltip content="Reload Caddy">
-          <mdui-button-icon id="pe-reload"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg></mdui-button-icon>
+        <mdui-tooltip content="Plugins">
+          <mdui-button-icon id="btn-plugins"
+            ><svg
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="currentColor"
+            >
+              <path
+                d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V19c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V21H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"
+              /></svg
+          ></mdui-button-icon>
+        </mdui-tooltip>
+        <mdui-tooltip content="Logout">
+          <mdui-button-icon id="btn-logout"
+            ><svg
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="currentColor"
+            >
+              <path
+                d="M17 8l-1.41 1.41L17.17 11H9v2h8.17l-1.58 1.59L17 16l4-4zM5 5h6V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6v-2H5V5z"
+              /></svg
+          ></mdui-button-icon>
         </mdui-tooltip>
       </div>
-      <div id="pe-directives"></div>
-    </div>
-    <div id="pe-note" class="parsed-row" style="margin-top:.75rem;"></div>
-  </div>
-  <div id="edit-raw-pane" hidden style="margin-top:1rem;">
-    <mdui-text-field id="edit-content" class="mono editor-field" variant="outlined" name="content" autocomplete="off"
-      spellcheck="false" autosize min-rows="16" max-rows="30"></mdui-text-field>
-  </div>
-  <div id="edit-error" style="color:rgb(var(--mdui-color-error));white-space:pre-wrap;font-size:.85rem;margin-top:.5rem;"></div>
-  <mdui-button slot="action" variant="text" id="edit-cancel">Cancel</mdui-button>
-  <mdui-button slot="action" variant="filled" id="edit-save">Save</mdui-button>
-</mdui-dialog>
+    </mdui-top-app-bar>
 
-<!-- plugins dialog -->
-<mdui-dialog id="dlg-plugins" close-on-overlay-click style="min-width:28rem;">
-  <span slot="headline">Plugins</span>
-  <div id="plugin-panels" style="display:flex;flex-direction:column;gap:1rem;"></div>
-  <div id="plugins-empty" class="parsed-row" style="opacity:.65;">No plugins loaded. Add one in Settings → Plugins (local script URL).</div>
-  <mdui-button slot="action" variant="filled" id="plugins-close">Close</mdui-button>
-</mdui-dialog>
+    <main>
+      <mdui-text-field
+        id="search"
+        name="search"
+        variant="outlined"
+        placeholder="Search domain, upstream, tls…"
+        clearable
+        autocomplete="off"
+        spellcheck="false"
+        style="margin-bottom: 1rem"
+      ></mdui-text-field>
+      <div id="routes"></div>
+      <div id="empty" hidden>No routes yet.</div>
+    </main>
 
-<!-- settings dialog -->
-<mdui-dialog id="dlg-settings" close-on-overlay-click style="min-width:24rem;">
-  <span slot="headline">Settings</span>
-  <div style="display:flex;flex-direction:column;gap:1.5rem;">
-    <div>
-      <div style="font-weight:500;margin-bottom:.5rem;">Theme</div>
-      <mdui-segmented-button-group id="set-theme" selects="single">
-        <mdui-segmented-button value="light">Light</mdui-segmented-button>
-        <mdui-segmented-button value="dark">Dark</mdui-segmented-button>
-        <mdui-segmented-button value="auto">Auto</mdui-segmented-button>
-      </mdui-segmented-button-group>
-    </div>
-    <div>
-      <div style="font-weight:500;margin-bottom:.5rem;">Accent color</div>
-      <div id="swatches" style="display:flex;gap:.75rem;"></div>
-    </div>
-    <div>
-      <div style="font-weight:500;margin-bottom:.5rem;">Updates</div>
-      <div id="upd-status" class="parsed-row" style="margin-bottom:.75rem;">
-        v<span class="cur-version">?</span> installed
-      </div>
-      <div id="upd-notes" style="display:none; white-space:pre-wrap; max-height:14rem; overflow:auto; background:rgb(var(--mdui-color-surface-container)); padding:0.75rem; border-radius:var(--mdui-shape-corner-medium); font-size:0.8rem; margin-bottom:.75rem; line-height:1.4;"></div>
-      <mdui-linear-progress id="upd-bar" indeterminate hidden style="margin-bottom:.75rem;"></mdui-linear-progress>
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
-        <mdui-button id="btn-upd-check" variant="outlined">Check for updates</mdui-button>
-        <mdui-button id="btn-upd-apply" variant="filled" hidden></mdui-button>
-      </div>
-      <mdui-checkbox id="upd-nightly">Nightly channel</mdui-checkbox>
-      <div style="font-size:0.75rem;opacity:0.6;margin-top:.25rem;">Daily builds from main — less stable, auto-updatable.</div>
-    </div>
-    <div>
-      <div style="font-weight:500;margin-bottom:.5rem;">Plugins</div>
-      <div id="plugin-list" style="display:flex;flex-direction:column;gap:.5rem;"></div>
-      <div style="display:flex;gap:.5rem;margin-top:.75rem;align-items:flex-end;">
-        <mdui-text-field id="plugin-url" name="plugin-url" variant="outlined" label="Plugin script URL"
-          placeholder="http://localhost:8090/caddedit-plugin.js" autocomplete="off" spellcheck="false" style="flex:1;"></mdui-text-field>
-        <mdui-button id="plugin-add" variant="outlined">Add</mdui-button>
-      </div>
-      <div class="parsed-row" style="opacity:.65;margin-top:.5rem;">
-        Plugins are local scripts your browser loads into this dashboard. Only add ones you trust.
-      </div>
-    </div>
-    <div>
-      <div style="font-weight:500;margin-bottom:.5rem;">CLI Access</div>
-      <div id="cli-token-status" class="parsed-row" style="opacity:.75;margin-bottom:.5rem;">Loading token status…</div>
-      <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
-        <mdui-button id="btn-gen-refresh" variant="outlined">Generate refresh token</mdui-button>
-        <mdui-button id="btn-copy-refresh" variant="text" hidden>Copy</mdui-button>
-      </div>
-      <div id="cli-token-display" class="mono" style="margin-top:.5rem;word-break:break-all;background:rgb(var(--mdui-color-surface-container));padding:.5rem;border-radius:8px;max-height:6rem;overflow:auto;" hidden></div>
-      <div id="cli-token-meta" class="parsed-row" style="opacity:.65;margin-top:.5rem;"></div>
-    </div>
-  </div>
-  <mdui-button slot="action" variant="filled" id="settings-done">Done</mdui-button>
-</mdui-dialog>
+    <mdui-fab
+      id="fab-new"
+      icon="add"
+      style="position: fixed; right: 1.5rem; bottom: 1.5rem"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="24"
+        height="24"
+        fill="currentColor"
+        slot="icon"
+      >
+        <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+      </svg>
+    </mdui-fab>
 
-<!-- new route dialog -->
-<mdui-dialog id="dlg-new" close-on-overlay-click>
-  <span slot="headline">New route</span>
-  <mdui-tabs id="new-tabs" value="parsed" full-width>
-    <mdui-tab value="parsed">Parsed</mdui-tab>
-    <mdui-tab value="raw">Raw</mdui-tab>
-  </mdui-tabs>
-  <div id="new-parsed-pane" style="display:flex;flex-direction:column;gap:1rem;min-width:24rem;margin-top:1rem;">
-    <mdui-text-field id="new-domains" name="domains" variant="outlined" label="Domains (comma separated)" placeholder="app.example.com" autocomplete="off" spellcheck="false"></mdui-text-field>
-    <mdui-text-field id="new-upstream" name="upstream" variant="outlined" label="Upstream" placeholder="localhost:3000" autocomplete="off" spellcheck="false"></mdui-text-field>
-    <mdui-select id="new-tls" variant="outlined" label="TLS">
-      <mdui-menu-item value="none">none (HTTP only)</mdui-menu-item>
-      <mdui-menu-item value="internal" selected>automatic / Let's Encrypt</mdui-menu-item>
-      <mdui-menu-item value="internal_explicit">tls internal</mdui-menu-item>
-      <mdui-menu-item value="cloudflare">Cloudflare DNS challenge</mdui-menu-item>
-    </mdui-select>
-    <mdui-checkbox id="new-watch-log">import request_watch_log</mdui-checkbox>
-    <div id="new-error" style="color:rgb(var(--mdui-color-error));white-space:pre-wrap;font-size:.85rem;"></div>
-  </div>
-  <div id="new-raw-pane" hidden style="margin-top:1rem;min-width:32rem;">
-    <mdui-text-field id="new-raw" name="source" class="mono" variant="outlined" label="Site block source" placeholder="app.example.com {
+    <!-- edit dialog: parsed GUI form + raw source, tabbed -->
+    <mdui-dialog
+      id="dlg-edit"
+      class="editor-dialog"
+      close-on-overlay-click
+      style="--dialog-max-width: 64rem; width: 64rem"
+    >
+      <span slot="headline">Edit <span id="edit-id" class="mono"></span></span>
+      <mdui-tabs id="edit-tabs" value="parsed" full-width>
+        <mdui-tab value="parsed">Parsed</mdui-tab>
+        <mdui-tab value="raw">Raw</mdui-tab>
+      </mdui-tabs>
+      <div id="edit-parsed-pane" style="margin-top: 1rem">
+        <div id="parsed-summary"></div>
+        <div class="form-grid">
+          <mdui-text-field
+            id="pe-domains"
+            name="domains"
+            label="Domains (comma separated)"
+            variant="outlined"
+            autocomplete="off"
+            spellcheck="false"
+          ></mdui-text-field>
+          <mdui-text-field
+            id="pe-upstream"
+            name="upstream"
+            label="Upstream (simple reverse_proxy target)"
+            placeholder="localhost:3000"
+            variant="outlined"
+            autocomplete="off"
+            spellcheck="false"
+          ></mdui-text-field>
+          <mdui-select id="pe-tls" variant="outlined" label="TLS">
+            <mdui-menu-item value="none">none (HTTP only)</mdui-menu-item>
+            <mdui-menu-item value="internal">tls internal</mdui-menu-item>
+            <mdui-menu-item value="acme"
+              >ACME email (Let's Encrypt)</mdui-menu-item
+            >
+            <mdui-menu-item value="cloudflare"
+              >Cloudflare DNS challenge</mdui-menu-item
+            >
+            <mdui-menu-item value="manual">cert + key files</mdui-menu-item>
+            <mdui-menu-item value="custom">custom (raw)</mdui-menu-item>
+          </mdui-select>
+          <mdui-checkbox
+            id="pe-watch-log"
+            style="align-self: end; padding-bottom: 0.75rem"
+            >import request_watch_log</mdui-checkbox
+          >
+          <div id="pe-tls-detail-wrap" hidden>
+            <mdui-text-field
+              id="pe-tls-detail"
+              name="tls-detail"
+              label="ACME email"
+              variant="outlined"
+              autocomplete="off"
+              spellcheck="false"
+            ></mdui-text-field>
+          </div>
+          <div id="pe-tls-raw-wrap" hidden style="grid-column: 1/-1">
+            <mdui-text-field
+              id="pe-tls-raw"
+              name="tls-raw"
+              class="mono"
+              label="Raw TLS block"
+              variant="outlined"
+              autosize
+              min-rows="3"
+              max-rows="10"
+              autocomplete="off"
+              spellcheck="false"
+            ></mdui-text-field>
+          </div>
+        </div>
+        <div id="pe-directives-wrap" hidden style="margin-top: 1rem">
+          <div style="display: flex; align-items: center; gap: 0.25rem">
+            <b
+              style="
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                opacity: 0.6;
+              "
+              >Directives</b
+            >
+            <span style="font-size: 0.75rem; opacity: 0.55"
+              >complex blocks stay raw — Raw tab recommended for heavy
+              edits</span
+            >
+            <span style="flex: 1"></span>
+            <mdui-tooltip content="Add directive">
+              <mdui-button-icon id="pe-add-dir"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  fill="currentColor"
+                >
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg
+              ></mdui-button-icon>
+            </mdui-tooltip>
+            <mdui-tooltip content="Edit raw Caddyfile">
+              <mdui-button-icon id="pe-goto-raw"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  fill="currentColor"
+                >
+                  <path
+                    d="M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6z"
+                  /></svg
+              ></mdui-button-icon>
+            </mdui-tooltip>
+            <mdui-tooltip content="Reload Caddy">
+              <mdui-button-icon id="pe-reload"
+                ><svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  fill="currentColor"
+                >
+                  <path
+                    d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"
+                  /></svg
+              ></mdui-button-icon>
+            </mdui-tooltip>
+          </div>
+          <div id="pe-directives"></div>
+        </div>
+        <div id="pe-note" class="parsed-row" style="margin-top: 0.75rem"></div>
+      </div>
+      <div id="edit-raw-pane" hidden style="margin-top: 1rem">
+        <mdui-text-field
+          id="edit-content"
+          class="mono editor-field"
+          variant="outlined"
+          name="content"
+          autocomplete="off"
+          spellcheck="false"
+          autosize
+          min-rows="16"
+          max-rows="30"
+        ></mdui-text-field>
+      </div>
+      <div
+        id="edit-error"
+        style="
+          color: rgb(var(--mdui-color-error));
+          white-space: pre-wrap;
+          font-size: 0.85rem;
+          margin-top: 0.5rem;
+        "
+      ></div>
+      <mdui-button slot="action" variant="text" id="edit-cancel"
+        >Cancel</mdui-button
+      >
+      <mdui-button slot="action" variant="filled" id="edit-save"
+        >Save</mdui-button
+      >
+    </mdui-dialog>
+
+    <!-- plugins dialog -->
+    <mdui-dialog
+      id="dlg-plugins"
+      close-on-overlay-click
+      style="min-width: 28rem"
+    >
+      <span slot="headline">Plugins</span>
+      <div
+        id="plugin-panels"
+        style="display: flex; flex-direction: column; gap: 1rem"
+      ></div>
+      <div id="plugins-empty" class="parsed-row" style="opacity: 0.65">
+        No plugins loaded. Add one in Settings → Plugins (local script URL).
+      </div>
+      <mdui-button slot="action" variant="filled" id="plugins-close"
+        >Close</mdui-button
+      >
+    </mdui-dialog>
+
+    <!-- settings dialog -->
+    <mdui-dialog
+      id="dlg-settings"
+      close-on-overlay-click
+      style="min-width: 24rem"
+    >
+      <span slot="headline">Settings</span>
+      <div style="display: flex; flex-direction: column; gap: 1.5rem">
+        <div>
+          <div style="font-weight: 500; margin-bottom: 0.5rem">Theme</div>
+          <mdui-segmented-button-group id="set-theme" selects="single">
+            <mdui-segmented-button value="light">Light</mdui-segmented-button>
+            <mdui-segmented-button value="dark">Dark</mdui-segmented-button>
+            <mdui-segmented-button value="auto">Auto</mdui-segmented-button>
+          </mdui-segmented-button-group>
+        </div>
+        <div>
+          <div style="font-weight: 500; margin-bottom: 0.5rem">
+            Accent color
+          </div>
+          <div id="swatches" style="display: flex; gap: 0.75rem"></div>
+        </div>
+        <div>
+          <div style="font-weight: 500; margin-bottom: 0.5rem">Updates</div>
+          <div
+            id="upd-status"
+            class="parsed-row"
+            style="margin-bottom: 0.75rem"
+          >
+            v<span class="cur-version">?</span> installed
+          </div>
+          <div
+            id="upd-notes"
+            style="
+              display: none;
+              white-space: pre-wrap;
+              max-height: 14rem;
+              overflow: auto;
+              background: rgb(var(--mdui-color-surface-container));
+              padding: 0.75rem;
+              border-radius: var(--mdui-shape-corner-medium);
+              font-size: 0.8rem;
+              margin-bottom: 0.75rem;
+              line-height: 1.4;
+            "
+          ></div>
+          <mdui-linear-progress
+            id="upd-bar"
+            indeterminate
+            hidden
+            style="margin-bottom: 0.75rem"
+          ></mdui-linear-progress>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+            <mdui-button id="btn-upd-check" variant="outlined"
+              >Check for updates</mdui-button
+            >
+            <mdui-button
+              id="btn-upd-apply"
+              variant="filled"
+              hidden
+            ></mdui-button>
+          </div>
+        </div>
+        <div>
+          <div style="font-weight: 500; margin-bottom: 0.5rem">Plugins</div>
+          <div
+            id="plugin-list"
+            style="display: flex; flex-direction: column; gap: 0.5rem"
+          ></div>
+          <div
+            style="
+              display: flex;
+              gap: 0.5rem;
+              margin-top: 0.75rem;
+              align-items: flex-end;
+            "
+          >
+            <mdui-text-field
+              id="plugin-url"
+              name="plugin-url"
+              variant="outlined"
+              label="Plugin script URL"
+              placeholder="http://localhost:8090/caddedit-plugin.js"
+              autocomplete="off"
+              spellcheck="false"
+              style="flex: 1"
+            ></mdui-text-field>
+            <mdui-button id="plugin-add" variant="outlined">Add</mdui-button>
+          </div>
+          <div class="parsed-row" style="opacity: 0.65; margin-top: 0.5rem">
+            Plugins are local scripts your browser loads into this dashboard.
+            Only add ones you trust.
+          </div>
+        </div>
+        <div>
+          <div style="font-weight: 500; margin-bottom: 0.5rem">CLI Access</div>
+          <div
+            id="cli-token-status"
+            class="parsed-row"
+            style="opacity: 0.75; margin-bottom: 0.5rem"
+          >
+            Loading token status…
+          </div>
+          <div
+            style="
+              display: flex;
+              gap: 0.5rem;
+              flex-wrap: wrap;
+              align-items: center;
+            "
+          >
+            <mdui-button id="btn-gen-refresh" variant="outlined"
+              >Generate refresh token</mdui-button
+            >
+            <mdui-button id="btn-copy-refresh" variant="text" hidden
+              >Copy</mdui-button
+            >
+          </div>
+          <div
+            id="cli-token-display"
+            class="mono"
+            style="
+              margin-top: 0.5rem;
+              word-break: break-all;
+              background: rgb(var(--mdui-color-surface-container));
+              padding: 0.5rem;
+              border-radius: 8px;
+              max-height: 6rem;
+              overflow: auto;
+            "
+            hidden
+          ></div>
+          <div
+            id="cli-token-meta"
+            class="parsed-row"
+            style="opacity: 0.65; margin-top: 0.5rem"
+          ></div>
+
+          <mdui-checkbox id="upd-nightly">Nightly channel</mdui-checkbox>
+          <div style="font-size: 0.75rem; opacity: 0.6; margin-top: 0.25rem">
+            Daily builds from main — less stable, auto-updatable.
+          </div>
+        </div>
+      </div>
+      <mdui-button slot="action" variant="filled" id="settings-done"
+        >Done</mdui-button
+      >
+    </mdui-dialog>
+
+    <!-- new route dialog -->
+    <mdui-dialog id="dlg-new" close-on-overlay-click>
+      <span slot="headline">New route</span>
+      <mdui-tabs id="new-tabs" value="parsed" full-width>
+        <mdui-tab value="parsed">Parsed</mdui-tab>
+        <mdui-tab value="raw">Raw</mdui-tab>
+      </mdui-tabs>
+      <div
+        id="new-parsed-pane"
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          min-width: 24rem;
+          margin-top: 1rem;
+        "
+      >
+        <mdui-text-field
+          id="new-domains"
+          name="domains"
+          variant="outlined"
+          label="Domains (comma separated)"
+          placeholder="app.example.com"
+          autocomplete="off"
+          spellcheck="false"
+        ></mdui-text-field>
+        <mdui-text-field
+          id="new-upstream"
+          name="upstream"
+          variant="outlined"
+          label="Upstream"
+          placeholder="localhost:3000"
+          autocomplete="off"
+          spellcheck="false"
+        ></mdui-text-field>
+        <mdui-select id="new-tls" variant="outlined" label="TLS">
+          <mdui-menu-item value="none">none (HTTP only)</mdui-menu-item>
+          <mdui-menu-item value="internal" selected
+            >automatic / Let's Encrypt</mdui-menu-item
+          >
+          <mdui-menu-item value="internal_explicit"
+            >tls internal</mdui-menu-item
+          >
+          <mdui-menu-item value="cloudflare"
+            >Cloudflare DNS challenge</mdui-menu-item
+          >
+        </mdui-select>
+        <mdui-checkbox id="new-watch-log"
+          >import request_watch_log</mdui-checkbox
+        >
+        <div
+          id="new-error"
+          style="
+            color: rgb(var(--mdui-color-error));
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+          "
+        ></div>
+      </div>
+      <div id="new-raw-pane" hidden style="margin-top: 1rem; min-width: 32rem">
+        <mdui-text-field
+          id="new-raw"
+          name="source"
+          class="mono"
+          variant="outlined"
+          label="Site block source"
+          placeholder="app.example.com {
 	reverse_proxy localhost:3000
 }"
-      autosize min-rows="8" max-rows="20" autocomplete="off" spellcheck="false"></mdui-text-field>
-  </div>
-  <mdui-button slot="action" variant="text" id="new-cancel">Cancel</mdui-button>
-  <mdui-button slot="action" variant="filled" id="new-create">Create</mdui-button>
-</mdui-dialog>
+          autosize
+          min-rows="8"
+          max-rows="20"
+          autocomplete="off"
+          spellcheck="false"
+        ></mdui-text-field>
+      </div>
+      <mdui-button slot="action" variant="text" id="new-cancel"
+        >Cancel</mdui-button
+      >
+      <mdui-button slot="action" variant="filled" id="new-create"
+        >Create</mdui-button
+      >
+    </mdui-dialog>
 
-<!-- login dialog -->
-<mdui-dialog id="dlg-login" close-on-overlay-click="false" style="min-width:22rem;">
-  <span slot="headline">Caddedit</span>
-  <div style="display:flex;flex-direction:column;gap:1rem;">
-    <mdui-text-field id="login-password" name="caddedit-login-password" type="password" variant="outlined" label="Password" toggle-password
-      autocomplete="new-password"></mdui-text-field>
-    <div id="login-error" style="color:rgb(var(--mdui-color-error));font-size:.85rem;"></div>
-  </div>
-  <mdui-button slot="action" variant="filled" id="login-go">Unlock</mdui-button>
-</mdui-dialog>
+    <!-- login dialog -->
+    <mdui-dialog
+      id="dlg-login"
+      close-on-overlay-click="false"
+      style="min-width: 22rem"
+    >
+      <span slot="headline">Caddedit</span>
+      <div style="display: flex; flex-direction: column; gap: 1rem">
+        <mdui-text-field
+          id="login-password"
+          name="caddedit-login-password"
+          type="password"
+          variant="outlined"
+          label="Password"
+          toggle-password
+          autocomplete="new-password"
+        ></mdui-text-field>
+        <div
+          id="login-error"
+          style="color: rgb(var(--mdui-color-error)); font-size: 0.85rem"
+        ></div>
+      </div>
+      <mdui-button slot="action" variant="filled" id="login-go"
+        >Unlock</mdui-button
+      >
+    </mdui-dialog>
 
-<script src="/vendor/mdui/mdui.global.js"></script>
-<script src="/app.js"></script>
-</body>
+    <script src="/vendor/mdui/mdui.global.js"></script>
+    <script src="/app.js"></script>
+  </body>
 </html>

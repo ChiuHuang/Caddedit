@@ -47,6 +47,7 @@ enum Cmd {
         no_reload: bool,
     },
     /// List every route with status, type, upstream and TLS
+    #[command(alias = "list")]
     Ls {
         #[arg(long)]
         json: bool,

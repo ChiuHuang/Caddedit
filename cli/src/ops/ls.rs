@@ -6,6 +6,16 @@ use anyhow::Result;
 use owo_colors::OwoColorize;
 
 pub fn run(paths: &Paths, json: bool, query: Option<&str>) -> Result<()> {
+    // If logged in to a remote (via `caddedit login`) and no local Caddyfile exists,
+    // prefer remote. This makes `caddedit ls` work in any directory after login
+    // (e.g., C:\Projects\4.2EinkWifiAdapt) without needing /etc/caddy.
+    // When a local Caddyfile is present (e.g., tests pass --config <temp>),
+    // keep local behaviour.
+    if !paths.caddyfile.exists() {
+        if let Some(res) = crate::auth_client::try_remote_ls(json, query) {
+            return res;
+        }
+    }
     let mut rows = crate::vhost::summarize(paths);
 
     // optional substring filter across every visible field
