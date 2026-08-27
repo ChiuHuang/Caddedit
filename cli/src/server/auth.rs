@@ -50,15 +50,16 @@ pub fn save_refresh(paths: &Paths, rt: &Option<RefreshToken>) -> anyhow::Result<
         use std::io::Write;
         f.write_all(data.as_bytes())?;
         f.sync_all()?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         std::fs::write(&file, data)?;
-        return Ok(());
+        Ok(())
     }
 }
 
+#[allow(dead_code)]
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

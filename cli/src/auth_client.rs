@@ -105,8 +105,15 @@ fn exchange_via_curl(url: &str, refresh_token: &str) -> anyhow::Result<(String, 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let body = String::from_utf8_lossy(&out.stdout);
-        let msg = if !body.is_empty() { body.trim() } else { err.trim() };
-        anyhow::bail!("refresh failed: {}", if msg.is_empty() { "unknown error" } else { msg });
+        let msg = if !body.is_empty() {
+            body.trim()
+        } else {
+            err.trim()
+        };
+        anyhow::bail!(
+            "refresh failed: {}",
+            if msg.is_empty() { "unknown error" } else { msg }
+        );
     }
     let body = String::from_utf8_lossy(&out.stdout);
     let v: serde_json::Value = serde_json::from_str(&body)?;
@@ -118,10 +125,7 @@ fn exchange_via_curl(url: &str, refresh_token: &str) -> anyhow::Result<(String, 
         .and_then(|t| t.as_str())
         .ok_or_else(|| anyhow::anyhow!("missing access_token in response"))?
         .to_string();
-    let expires_at = v
-        .get("expires_at")
-        .and_then(|e| e.as_u64())
-        .unwrap_or(0);
+    let expires_at = v.get("expires_at").and_then(|e| e.as_u64()).unwrap_or(0);
     Ok((token, expires_at))
 }
 
@@ -133,11 +137,15 @@ pub fn run_login(url: &str, refresh_token: &str, save: bool) -> anyhow::Result<(
     if !curl_available() {
         anyhow::bail!("curl not found — install curl or use: curl -H \"User-Agent: {USER_AGENT}\" -H \"Content-Type: application/json\" -d '{{\"refresh_token\":\"{}\"}}' {}/api/auth/refresh", refresh_token, url.trim_end_matches('/'));
     }
-    println!("{} exchanging refresh token at {} ...", "caddedit".to_string(), url);
+    println!("caddedit exchanging refresh token at {} ...", url);
     let (access, expires_at) = exchange_via_curl(url, refresh_token)?;
     println!("✓ access token issued (expires_at={})", expires_at);
     println!("  token: {}", access);
-    println!("  Use: curl -H \"Authorization: Bearer {}\" -H \"User-Agent: {USER_AGENT}\" {}/api/vhosts", access, url.trim_end_matches('/'));
+    println!(
+        "  Use: curl -H \"Authorization: Bearer {}\" -H \"User-Agent: {USER_AGENT}\" {}/api/vhosts",
+        access,
+        url.trim_end_matches('/')
+    );
     if save {
         let mut cfg = load_config();
         cfg.url = Some(url.trim().to_string());
@@ -189,7 +197,7 @@ fn json_masked(cfg: &CliConfig) -> serde_json::Value {
                 if !s.is_empty() {
                     // mask all but first 4 chars
                     let masked = if s.len() > 8 {
-                        format!("{}…{} ({} chars)", &s[..4], &s[s.len()-4..], s.len())
+                        format!("{}…{} ({} chars)", &s[..4], &s[s.len() - 4..], s.len())
                     } else {
                         "****".to_string()
                     };
@@ -201,6 +209,7 @@ fn json_masked(cfg: &CliConfig) -> serde_json::Value {
     v
 }
 
+#[allow(dead_code)]
 pub fn user_agent() -> &'static str {
     USER_AGENT
 }

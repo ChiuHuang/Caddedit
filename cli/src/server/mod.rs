@@ -134,9 +134,7 @@ fn authenticated(st: &AppState, headers: &HeaderMap) -> bool {
 async fn auth_mw(State(st): State<SharedState>, req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     // open endpoints: status and auth exchange (login + refresh)
-    let open = path == "/api/status"
-        || path == "/api/login"
-        || path == "/api/auth/refresh";
+    let open = path == "/api/status" || path == "/api/login" || path == "/api/auth/refresh";
     if open || st.password.is_none() {
         return next.run(req).await;
     }
@@ -285,7 +283,11 @@ async fn logout(State(st): State<SharedState>, headers: HeaderMap) -> Response {
 /* ---------- auth token handlers ---------- */
 
 async fn token_status(State(st): State<SharedState>) -> Response {
-    let rt = st.refresh_token.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let rt = st
+        .refresh_token
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
     let access_count = st
         .access_tokens
         .lock()
@@ -320,7 +322,7 @@ async fn generate_refresh_token(State(st): State<SharedState>, headers: HeaderMa
         };
         *guard = Some(rt.clone());
         // persist
-        if let Err(e) = auth::save_refresh(&st.paths, &*guard) {
+        if let Err(e) = auth::save_refresh(&st.paths, &guard) {
             return err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("failed to persist refresh token: {e}"),
@@ -365,7 +367,12 @@ async fn refresh_access_token(
         .clone();
     let rt = match stored {
         Some(r) => r,
-        None => return err(StatusCode::NOT_FOUND, "no refresh token configured — generate one in Settings"),
+        None => {
+            return err(
+                StatusCode::NOT_FOUND,
+                "no refresh token configured — generate one in Settings",
+            )
+        }
     };
     if req.refresh_token.trim() != rt.token {
         return err(StatusCode::UNAUTHORIZED, "invalid refresh token");
