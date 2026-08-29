@@ -59,8 +59,8 @@ pub fn run(paths: &Paths, json: bool, query: Option<&str>) -> Result<()> {
     for (_, s) in &rows {
         table.push([
             match s.status {
-                crate::vhost::Status::On => "??on".green().to_string(),
-                crate::vhost::Status::Off => "??off".dimmed().to_string(),
+                crate::vhost::Status::On => "● on".green().to_string(),
+                crate::vhost::Status::Off => "○ off".dimmed().to_string(),
             },
             s.info.addresses.join(", "),
             kind_label(s.info.kind)

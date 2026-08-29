@@ -12,6 +12,7 @@ pub fn asset_name() -> Option<&'static str> {
         ("linux", "aarch64") => Some("aarch64-unknown-linux-musl"),
         ("macos", "x86_64") => Some("x86_64-apple-darwin"),
         ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
         _ => None,
     }
 }
@@ -330,6 +331,22 @@ install -m 0755 "$asset/caddedit" /usr/local/bin/caddedit
 echo "installed $(/usr/local/bin/caddedit --version)"
 "#;
 
+const INSTALL_SCRIPT_CLI: &str = r#"set -eu
+dir="$(mktemp -d)"
+cd "$dir"
+base="https://github.com/{repo}/releases/download/{tag}"
+asset="caddedit-{target}"
+curl -fsSL --max-time 120 "$base/$asset.tar.gz" -O
+expected="$(curl -fsSL --max-time 30 --retry 3 "$base/$asset.tar.gz.sha256" | awk '{print $1}')"
+actual="$(sha256sum "$asset.tar.gz" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$asset.tar.gz" | awk '{print $1}')"
+[ -n "$expected" ] || { echo "empty checksum (download of .sha256 failed)"; exit 1; }
+[ "$expected" = "$actual" ] || { echo "checksum mismatch: expected $expected got $actual"; exit 1; }
+tar xzf "$asset.tar.gz"
+# install to the current exe location (for CLI self-update)
+install -m 0755 "$asset/caddedit" "{dest}"
+echo "installed $({dest} --version)"
+"#;
+
 /// Download, checksum-verify and install `version` over /usr/local/bin/caddedit.
 pub fn install_version(version: &str) -> Result<String> {
     let target =
@@ -364,6 +381,133 @@ pub fn install_version(version: &str) -> Result<String> {
                 detail
             }
         ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// Install `version` over the current CLI binary (wherever it lives).
+/// On Unix it installs to `current_exe`; on Windows it handles `.zip`.
+pub fn install_cli_version(version: &str) -> Result<String> {
+    let target =
+        asset_name().ok_or_else(|| anyhow!("auto-update not supported on this platform"))?;
+    let tag = if version == "nightly" || version.starts_with("nightly") || version.contains("_rnd")
+    {
+        "nightly".to_string()
+    } else {
+        format!("v{version}")
+    };
+    let exe = std::env::current_exe().context("cannot determine current exe path")?;
+    let exe_str = exe.display().to_string();
+    if cfg!(windows) {
+        return install_cli_windows(&tag, target, &exe_str);
+    }
+    // Unix: use sh script targeting current exe path
+    // Escape single quotes for sh
+    let dest_escaped = exe_str.replace('\'', "'\\''");
+    let script = INSTALL_SCRIPT_CLI
+        .replace("{repo}", REPO)
+        .replace("{tag}", &tag)
+        .replace("{target}", target)
+        .replace("{dest}", &dest_escaped);
+    let out = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&script)
+        .output()
+        .map_err(|e| anyhow!("cannot run sh: {e}"))?;
+    if !out.status.success() {
+        let detail = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout).trim(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+        return Err(anyhow!(
+            "update script failed: {}",
+            if detail.is_empty() {
+                "unknown error".to_string()
+            } else {
+                detail
+            }
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+#[allow(clippy::format_in_format_args)]
+fn install_cli_windows(tag: &str, target: &str, dest: &str) -> Result<String> {
+    // Windows asset is .zip
+    let url = format!("https://github.com/{REPO}/releases/download/{tag}/caddedit-{target}.zip");
+    let sha_url = format!("{url}.sha256");
+    // Use PowerShell to download, verify, and replace. We use curl.exe if available for download,
+    // but fallback to Invoke-WebRequest.
+    let ps_script = format!(
+        r#"
+$ErrorActionPreference='Stop'
+$base="{base}"
+$asset="caddedit-{target}"
+$url="{url}"
+$shaUrl="{sha_url}"
+$dest="{dest}"
+$tmp=Join-Path $env:TEMP ("caddedit_upd_" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+Set-Location $tmp
+Write-Host "downloading $url"
+# prefer curl.exe, fallback to Invoke-WebRequest
+$zip="caddedit-{target}.zip"
+$curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+if ($curl) {{
+  & curl.exe -fsSL --max-time 120 -o $zip $url
+  if ($LASTEXITCODE -ne 0) {{ throw "curl download failed" }}
+  $shaFile="caddedit-{target}.zip.sha256"
+  & curl.exe -fsSL --max-time 30 -o $shaFile $shaUrl
+  if ($LASTEXITCODE -ne 0) {{ throw "curl sha256 download failed" }}
+}} else {{
+  Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+  Invoke-WebRequest -Uri $shaUrl -OutFile "caddedit-{target}.zip.sha256" -UseBasicParsing
+}}
+$expected=(Get-Content "caddedit-{target}.zip.sha256" | ForEach-Object {{ $_.Split(' ')[0] }} | Select-Object -First 1).Trim().ToLower()
+if (-not $expected) {{ throw "empty checksum" }}
+$actual=(Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+if ($expected -ne $actual) {{ throw "checksum mismatch: expected $expected got $actual" }}
+Write-Host "checksum ok"
+Expand-Archive -Path $zip -DestinationPath . -Force
+$inner=Get-ChildItem -Directory -Filter "caddedit-*" | Select-Object -First 1
+if ($inner) {{ $src=Join-Path $inner.FullName "caddedit.exe" }} else {{ $src=Join-Path $tmp "caddedit.exe" }}
+if (-not (Test-Path $src)) {{ throw "extracted caddedit.exe not found at $src" }}
+Write-Host "replacing $dest"
+# Windows allows renaming running exe
+$old="$dest.old"
+if (Test-Path $old) {{ Remove-Item $old -Force -ErrorAction SilentlyContinue }}
+try {{ Move-Item -Path $dest -Destination $old -Force -ErrorAction Stop }} catch {{ Write-Host "rename old failed (may be locked): $_" }}
+Move-Item -Path $src -Destination $dest -Force
+Write-Host "installed $dest"
+& $dest --version | Write-Host
+# cleanup
+Set-Location $env:TEMP
+Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+"#,
+        base = format!("https://github.com/{REPO}/releases/download/{tag}"),
+        target = target,
+        url = url,
+        sha_url = sha_url,
+        dest = dest.replace('\'', "''")
+    );
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &ps_script,
+        ])
+        .output()
+        .map_err(|e| anyhow!("cannot run powershell: {e}"))?;
+    if !out.status.success() {
+        let detail = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return Err(anyhow!("windows update failed: {}", detail.trim()));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
 }
@@ -406,7 +550,7 @@ mod tests {
     fn asset_matches_build_target() {
         // whatever CI builds must be downloadable by itself
         let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("linux", "x86_64") | ("macos", "x86_64") => true,
+            ("linux", "x86_64") | ("macos", "x86_64") | ("windows", "x86_64") => true,
             ("linux" | "macos", "aarch64") => true,
             _ => asset_name().is_none(),
         };

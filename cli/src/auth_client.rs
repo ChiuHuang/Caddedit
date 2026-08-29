@@ -116,6 +116,7 @@ fn curl_available() -> bool {
 
 /// Perform POST /api/auth/refresh via curl (avoids adding reqwest dep).
 fn exchange_via_curl(url: &str, refresh_token: &str) -> anyhow::Result<(String, u64)> {
+    let url = normalize_url(url);
     let endpoint = format!("{}/api/auth/refresh", url.trim_end_matches('/'));
     let payload = serde_json::json!({ "refresh_token": refresh_token }).to_string();
     // Use curl -fsSL -H ... -d ...
@@ -164,12 +165,13 @@ fn exchange_via_curl(url: &str, refresh_token: &str) -> anyhow::Result<(String, 
 
 pub(crate) fn try_remote_ls(json: bool, query: Option<&str>) -> Option<anyhow::Result<()>> {
     let cfg = load_valid_config()?;
-    let url = cfg.url?.trim().to_string();
+    let url_raw = cfg.url?.trim().to_string();
+    let url = normalize_url(&url_raw);
     let token = cfg.access_token?.trim().to_string();
     if url.is_empty() || token.is_empty() {
         return None;
     }
-    // fetch via curl GET /api/vhosts
+    // fetch via curl GET /api/vhosts — normalized to https:// to avoid http->https 308 stripping Authorization
     let endpoint = format!("{}/api/vhosts", url.trim_end_matches('/'));
     let out = std::process::Command::new("curl")
         .args([
@@ -392,16 +394,26 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
+fn normalize_url(url: &str) -> String {
+    let u = url.trim();
+    if u.contains("://") {
+        u.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{}", u.trim_end_matches('/'))
+    }
+}
+
 pub fn run_login(url: &str, refresh_token: &str, save: bool) -> anyhow::Result<()> {
     if url.trim().is_empty() || refresh_token.trim().is_empty() {
         anyhow::bail!("url and refresh_token are required");
     }
+    let url = normalize_url(url);
     // Prefer curl if available, else fallback to simple message
     if !curl_available() {
         anyhow::bail!("curl not found — install curl or use: curl -H \"User-Agent: {USER_AGENT}\" -H \"Content-Type: application/json\" -d '{{\"refresh_token\":\"{}\"}}' {}/api/auth/refresh", refresh_token, url.trim_end_matches('/'));
     }
     println!("caddedit exchanging refresh token at {} ...", url);
-    let (access, expires_at) = exchange_via_curl(url, refresh_token)?;
+    let (access, expires_at) = exchange_via_curl(&url, refresh_token)?;
     println!("✓ access token issued (expires_at={})", expires_at);
     println!("  token: {}", access);
     println!("  You can now run `caddedit ls` or `caddedit list` to manage remote vhosts.");

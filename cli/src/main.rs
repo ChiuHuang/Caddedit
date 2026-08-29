@@ -125,6 +125,18 @@ enum Cmd {
     Logout,
     /// Show stored CLI config (url + masked tokens)
     Config,
+    /// Update caddedit binary to latest GitHub release (CLI self-update, distinct from web dashboard)
+    Update {
+        /// Only check for updates, don't install
+        #[arg(long)]
+        check: bool,
+        /// Release channel: stable or nightly
+        #[arg(long, default_value = "stable")]
+        channel: String,
+        /// Auto confirm without prompt
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -193,6 +205,11 @@ fn main() -> std::process::ExitCode {
             } => auth_client::run_login(&url, &refresh_token, !no_save),
             Cmd::Logout => auth_client::run_logout(),
             Cmd::Config => auth_client::run_config_show(),
+            Cmd::Update {
+                check,
+                channel,
+                yes,
+            } => ops::update::run(check, &channel, yes),
         },
     };
 

@@ -6,6 +6,7 @@ pub mod new;
 pub mod reload;
 pub mod show;
 pub mod toggle;
+pub mod update;
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
