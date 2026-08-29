@@ -113,10 +113,10 @@ enum Cmd {
     Login {
         /// Server URL, e.g. https://caddedit.example.com
         #[arg(long)]
-        url: String,
+        url: Option<String>,
         /// One-time refresh token from Settings → CLI Access
         #[arg(long)]
-        refresh_token: String,
+        refresh_token: Option<String>,
         /// Save access token to config file (~/.config/caddedit/cli.json) (default true, use --no-save to print only)
         #[arg(long)]
         no_save: bool,
@@ -202,14 +202,44 @@ fn main() -> std::process::ExitCode {
                 url,
                 refresh_token,
                 no_save,
-            } => auth_client::run_login(&url, &refresh_token, !no_save),
+            } => {
+                // interactive TUI when args omitted and stdin is a TTY
+                let use_tui = url.is_none() || refresh_token.is_none();
+                if use_tui
+                    && std::io::IsTerminal::is_terminal(&std::io::stdin())
+                    && std::io::IsTerminal::is_terminal(&std::io::stdout())
+                {
+                    auth_client::run_login_tui(!no_save)
+                } else {
+                    let u = url.as_deref().unwrap_or("");
+                    let r = refresh_token.as_deref().unwrap_or("");
+                    if u.is_empty() || r.is_empty() {
+                        Err(anyhow::anyhow!(
+                            "url and --refresh-token are required in non-interactive shells; use `caddedit login --url <url> --refresh-token <token>` or run in a terminal for interactive login"
+                        ))
+                    } else {
+                        auth_client::run_login(u, r, !no_save)
+                    }
+                }
+            }
             Cmd::Logout => auth_client::run_logout(),
             Cmd::Config => auth_client::run_config_show(),
             Cmd::Update {
                 check,
                 channel,
                 yes,
-            } => ops::update::run(check, &channel, yes),
+            } => {
+                // launch interactive TUI when in a TTY and no explicit non-interactive flag
+                let interactive = std::io::IsTerminal::is_terminal(&std::io::stdin())
+                    && std::io::IsTerminal::is_terminal(&std::io::stdout());
+                if interactive && !check && !yes {
+                    // if channel was left as default and no install intent, show TUI
+                    // TUI handles channel switching + check + install interactively
+                    ops::update::run_tui(&channel)
+                } else {
+                    ops::update::run(check, &channel, yes)
+                }
+            }
         },
     };
 

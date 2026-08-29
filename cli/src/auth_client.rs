@@ -434,6 +434,320 @@ pub fn run_login(url: &str, refresh_token: &str, save: bool) -> anyhow::Result<(
     Ok(())
 }
 
+pub fn run_login_tui(save_default: bool) -> anyhow::Result<()> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::execute;
+    use crossterm::terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    };
+    use ratatui::backend::CrosstermBackend;
+    use ratatui::layout::{Constraint, Layout};
+    use ratatui::style::{Color, Style, Stylize};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, Paragraph};
+    use ratatui::Terminal;
+    use std::io::{stdout, IsTerminal};
+
+    if !stdout().is_terminal() || !std::io::stdin().is_terminal() {
+        anyhow::bail!("interactive login requires a TTY; use `caddedit login --url <url> --refresh-token <token>`");
+    }
+
+    let existing = load_config();
+    let mut url = existing.url.unwrap_or_default();
+    // prefill token from existing refresh_token for convenience (masked)
+    let mut token = String::new();
+    let mut focus: usize = 0; // 0 url, 1 token, 2 save
+    let mut save = save_default;
+    let mut show_token = false;
+    let mut message: Option<(String, bool)> = None;
+    let mut done = false;
+
+    // if url empty, focus url, else focus token
+    if !url.is_empty() {
+        focus = 1;
+    }
+
+    enable_raw_mode()?;
+    execute!(stdout(), EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    let res: anyhow::Result<()> = (|| {
+        loop {
+            terminal.draw(|f| {
+                let area = f.area();
+                let chunks = Layout::vertical([
+                    Constraint::Length(1),
+                    Constraint::Length(3),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(" caddedit login ", Style::new().bold().fg(Color::Cyan)),
+                        Span::styled("— refresh token → access token (curl)", Style::new().dim()),
+                    ])),
+                    chunks[0],
+                );
+
+                let url_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(Line::from(vec![
+                        Span::raw(" Server URL "),
+                        Span::styled("e.g. https://caddedit.example.com", Style::new().dim()),
+                    ]))
+                    .border_style(if focus == 0 {
+                        Style::new().fg(Color::Yellow)
+                    } else {
+                        Style::new().dim()
+                    });
+                let url_display = if focus == 0 {
+                    format!("{}_", url)
+                } else {
+                    url.clone()
+                };
+                f.render_widget(Paragraph::new(url_display).block(url_block), chunks[1]);
+
+                let token_title = if show_token {
+                    " Refresh Token (visible) "
+                } else {
+                    " Refresh Token (masked) "
+                };
+                let token_block = Block::default()
+                    .borders(Borders::ALL)
+                    .title(token_title)
+                    .border_style(if focus == 1 {
+                        Style::new().fg(Color::Yellow)
+                    } else {
+                        Style::new().dim()
+                    });
+                let token_display = if show_token {
+                    if focus == 1 {
+                        format!("{}_", token)
+                    } else {
+                        token.clone()
+                    }
+                } else if token.is_empty() {
+                    if focus == 1 {
+                        "_".to_string()
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    let masked = "•".repeat(token.chars().count());
+                    if focus == 1 {
+                        format!("{masked}_")
+                    } else {
+                        masked
+                    }
+                };
+                f.render_widget(Paragraph::new(token_display).block(token_block), chunks[2]);
+
+                let save_line = if save {
+                    Span::styled("[x] Save to cli.json", Style::new().fg(Color::Green))
+                } else {
+                    Span::styled("[ ] Save to cli.json (print only)", Style::new().dim())
+                };
+                let save_para = Paragraph::new(Line::from(vec![
+                    if focus == 2 {
+                        Span::styled("> ", Style::new().fg(Color::Yellow))
+                    } else {
+                        Span::raw("  ")
+                    },
+                    save_line,
+                    Span::styled("  (Space toggle)", Style::new().dim()),
+                ]));
+                f.render_widget(save_para, chunks[3]);
+
+                if let Some((msg, is_err)) = &message {
+                    let style = if *is_err {
+                        Style::new().fg(Color::Red)
+                    } else {
+                        Style::new().fg(Color::Green)
+                    };
+                    f.render_widget(
+                        Paragraph::new(Line::from(Span::styled(msg.clone(), style))),
+                        chunks[4],
+                    );
+                } else {
+                    let cfg_path = config_file()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<unknown>".into());
+                    f.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            format!("config: {}", cfg_path),
+                            Style::new().dim(),
+                        ))),
+                        chunks[4],
+                    );
+                }
+
+                // help bar
+                let help = if done {
+                    Line::from(Span::styled(
+                        " success — press Enter or Esc to exit · Tab switch field ",
+                        Style::new().fg(Color::Green),
+                    ))
+                } else {
+                    Line::from(vec![
+                        Span::styled("Tab", Style::new().bold().fg(Color::Yellow)),
+                        Span::raw(" switch · "),
+                        Span::styled("Enter", Style::new().bold().fg(Color::Yellow)),
+                        Span::raw(" submit · "),
+                        Span::styled("Space", Style::new().bold().fg(Color::Yellow)),
+                        Span::raw(" toggle save · "),
+                        Span::styled("Ctrl+R", Style::new().bold().fg(Color::Yellow)),
+                        Span::raw(" show/hide token · "),
+                        Span::styled("Esc", Style::new().bold().fg(Color::Yellow)),
+                        Span::raw(" cancel"),
+                    ])
+                };
+                f.render_widget(Paragraph::new(help), chunks[6]);
+            })?;
+
+            if !event::poll(std::time::Duration::from_millis(200))? {
+                continue;
+            }
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                    anyhow::bail!("cancelled");
+                }
+                // Ctrl+R toggle token visibility
+                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+                    show_token = !show_token;
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Esc => {
+                        if done {
+                            return Ok(());
+                        }
+                        anyhow::bail!("cancelled");
+                    }
+                    KeyCode::Enter => {
+                        if done {
+                            return Ok(());
+                        }
+                        // submit if both fields non-empty
+                        if url.trim().is_empty() {
+                            message = Some(("URL is required".into(), true));
+                            focus = 0;
+                            continue;
+                        }
+                        if token.trim().is_empty() {
+                            message = Some(("refresh token is required".into(), true));
+                            focus = 1;
+                            continue;
+                        }
+                        // attempt login (blocking)
+                        message = Some(("exchanging refresh token ...".into(), false));
+                        // draw one more frame to show message before blocking
+                        terminal.draw(|f| {
+                            let area = f.area();
+                            let chunks = Layout::vertical([
+                                Constraint::Length(1),
+                                Constraint::Length(3),
+                                Constraint::Length(3),
+                                Constraint::Length(1),
+                                Constraint::Length(1),
+                                Constraint::Min(1),
+                                Constraint::Length(1),
+                            ])
+                            .split(area);
+                            f.render_widget(
+                                Paragraph::new(Line::from(Span::styled(
+                                    " exchanging refresh token ...",
+                                    Style::new().fg(Color::Yellow),
+                                ))),
+                                chunks[4],
+                            );
+                        })?;
+                        let normalized = normalize_url(&url);
+                        match exchange_via_curl(&normalized, token.trim()) {
+                            Ok((access, expires_at)) => {
+                                if save {
+                                    let mut cfg = load_config();
+                                    cfg.url = Some(normalized.clone());
+                                    cfg.access_token = Some(access.clone());
+                                    cfg.expires_at = Some(expires_at);
+                                    cfg.refresh_token = Some(token.trim().to_string());
+                                    if let Err(e) = save_config(&cfg) {
+                                        message = Some((format!("save failed: {e:#}"), true));
+                                        continue;
+                                    }
+                                    let file = config_file()
+                                        .map(|p| p.display().to_string())
+                                        .unwrap_or_else(|| "<unknown>".into());
+                                    message = Some((
+                                        format!(
+                                            "✓ access token issued (expires_at={}) saved to {}",
+                                            expires_at, file
+                                        ),
+                                        false,
+                                    ));
+                                } else {
+                                    message = Some((
+                                        format!(
+                                            "✓ access token issued (expires_at={}) token: {}",
+                                            expires_at, access
+                                        ),
+                                        false,
+                                    ));
+                                }
+                                done = true;
+                            }
+                            Err(e) => {
+                                message = Some((format!("{e:#}"), true));
+                            }
+                        }
+                    }
+                    KeyCode::Tab | KeyCode::Down => {
+                        focus = (focus + 1) % 3;
+                    }
+                    KeyCode::BackTab | KeyCode::Up => {
+                        focus = (focus + 2) % 3;
+                    }
+                    KeyCode::Char(' ') if focus == 2 => {
+                        save = !save;
+                    }
+                    KeyCode::Backspace => {
+                        if focus == 0 {
+                            url.pop();
+                        } else if focus == 1 {
+                            token.pop();
+                        }
+                        message = None;
+                    }
+                    KeyCode::Char(c) => {
+                        if focus == 0 {
+                            url.push(c);
+                            message = None;
+                        } else if focus == 1 {
+                            token.push(c);
+                            message = None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    })();
+
+    disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    res
+}
+
 pub fn run_logout() -> anyhow::Result<()> {
     let mut cfg = load_config();
     let had = cfg.access_token.is_some() || cfg.refresh_token.is_some();
